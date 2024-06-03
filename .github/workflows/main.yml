@@ -21,6 +21,13 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      # Optional build step
+      - name: Build project
+        run: |
+          echo "No build script defined, skipping build."
+          # Uncomment the next line if you have a build step
+          # npm run build
+
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
@@ -29,3 +36,20 @@ jobs:
 
       - name: Log deployment status
         run: echo "Deployment completed successfully!"
+
+      - name: Check node version
+        run: node -v
+
+      - name: Check npm version
+        run: npm -v
+
+      - name: List project files
+        run: ls -al
+
+      - name: Print environment variables
+        run: printenv
+
+      - name: Check Azure Web App logs
+        run: |
+          echo "Fetching Azure Web App logs..."
+          az webapp log tail --name LeoDiscordMusicBot --resource-group myResourceGroup
