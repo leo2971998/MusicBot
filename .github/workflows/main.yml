@@ -21,34 +21,19 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Add environment variables
-        run: echo DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }} >> $GITHUB_ENV
-      # Optional build step
       - name: Build project
-        run: |
-          echo "No build script defined, skipping build."
-          # Uncomment the next line if you have a build step
-          # npm run build
+        run: npm run build
+
+      - name: Zip files for WebJob
+        run: zip -r bot.zip . -x "*.git*"
 
       - name: Deploy to Azure Web App
-        uses: azure/webapps-deploy@v3
+        uses: azure/webapps-deploy@v2
         with:
           app-name: 'LeoDiscordMusicBot'
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: './bot.zip'
 
-      - name: Log deployment status
-        run: echo "Deployment completed successfully!"
-
-      - name: Check node version
-        run: node -v
-
-      - name: Check npm version
-        run: npm -v
-
-      - name: List project files
-        run: ls -al
-
-      - name: Print environment variables
-        run: printenv
-
-   
+      - name: Start WebJob
+        run: |
+          az webapp webjob continuous start --resource-group YourResourceGroup --name YourAppName --webjob-name YourWebJobName
