@@ -21,6 +21,8 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Add environment variables
+        run: echo DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }} >> $GITHUB_ENV
       # Optional build step
       - name: Build project
         run: |
@@ -49,7 +51,4 @@ jobs:
       - name: Print environment variables
         run: printenv
 
-      - name: Check Azure Web App logs
-        run: |
-          echo "Fetching Azure Web App logs..."
-          az webapp log tail --name LeoDiscordMusicBot --resource-group myResourceGroup
+   
