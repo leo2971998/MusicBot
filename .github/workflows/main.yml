@@ -1,15 +1,17 @@
-name: Discord Bot
+name: Deploy to Azure Web App
+
 on:
   push:
     branches:
       - master
 
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -19,7 +21,11 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Run the bot
-        run: node index.js
-        env:
-          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+      - name: Build project
+        run: npm run build
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: 'LeoDiscordMusicBot'
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
