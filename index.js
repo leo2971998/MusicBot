@@ -14,6 +14,7 @@ const {
     YouTubeExtractor,
     SpotifyExtractor,
 } = require("@discord-player/extractor");
+const fs = require("fs");
 
 const client = new Client({
     intents: [
@@ -31,8 +32,34 @@ player.extractors.register(SpotifyExtractor, {});
 
 let stableMessage = null; // Store the stable message object
 
-client.once("ready", () => {
+const configFilePath = "./config.json";
+
+function saveConfig(config) {
+    fs.writeFileSync(configFilePath, JSON.stringify(config, null, 4));
+}
+
+function loadConfig() {
+    if (!fs.existsSync(configFilePath)) {
+        return {};
+    }
+    return JSON.parse(fs.readFileSync(configFilePath));
+}
+
+const config = loadConfig();
+
+client.once("ready", async () => {
     console.log("Bot is online!");
+
+    if (config.stableMessageId && config.channelId) {
+        try {
+            const channel = await client.channels.fetch(config.channelId);
+            stableMessage = await channel.messages.fetch(
+                config.stableMessageId,
+            );
+        } catch (error) {
+            console.error("Failed to fetch the stable message:", error);
+        }
+    }
 });
 
 async function updateStableMessage(queue) {
@@ -68,8 +95,8 @@ async function updateStableMessage(queue) {
         currentRow.addComponents(
             new ButtonBuilder()
                 .setCustomId(`remove_${index}`)
-                .setLabel(`❌ Remove ${index + 1}`)
-                .setStyle(ButtonStyle.Danger)
+                .setLabel(`❌ Remove number ${index + 1} song`)
+                .setStyle(ButtonStyle.Primary),
         );
     });
 
@@ -85,7 +112,7 @@ async function updateStableMessage(queue) {
         new ButtonBuilder()
             .setCustomId("resume")
             .setLabel("▶️ Play")
-            .setStyle(ButtonStyle.Success),
+            .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
             .setCustomId("skip")
             .setLabel("⏭️ Skip")
@@ -93,12 +120,19 @@ async function updateStableMessage(queue) {
         new ButtonBuilder()
             .setCustomId("stop")
             .setLabel("⏹️ Stop")
-            .setStyle(ButtonStyle.Danger),
+            .setStyle(ButtonStyle.Primary),
     );
 
     const queueEmbed = new EmbedBuilder()
         .setTitle("📜 Current Queue")
-        .setDescription(tracks.map((track, index) => `${index + 1}. **[${track.title}](${track.url})**`).join("\n") || "No more songs in the queue.")
+        .setDescription(
+            tracks
+                .map(
+                    (track, index) =>
+                        `${index + 1}. **[${track.title}](${track.url})**`,
+                )
+                .join("\n") || "No more songs in the queue.",
+        )
         .setFooter({ text: `Total songs in queue: ${tracks.length}` });
 
     await stableMessage.edit({
@@ -109,8 +143,11 @@ async function updateStableMessage(queue) {
 }
 
 async function clearMessages(channel) {
+    if (!stableMessage) return; // Check if stableMessage is null
     const messages = await channel.messages.fetch({ limit: 100 });
-    const messagesToDelete = messages.filter(msg => msg.id !== stableMessage.id);
+    const messagesToDelete = messages.filter(
+        (msg) => msg.id !== stableMessage.id,
+    );
     await channel.bulkDelete(messagesToDelete);
 }
 
@@ -143,6 +180,9 @@ client.on("messageCreate", async (message) => {
                 stableMessage = await channel.send(
                     "Setting up the music bot UI...",
                 );
+                config.channelId = channel.id;
+                config.stableMessageId = stableMessage.id;
+                saveConfig(config);
                 channel.send(
                     "This is your new music commands channel. Use `play <song name>` or `play <YouTube link>` to play music.",
                 );
@@ -156,6 +196,9 @@ client.on("messageCreate", async (message) => {
             stableMessage = await channel.send(
                 "Setting up the music bot UI...",
             );
+            config.channelId = channel.id;
+            config.stableMessageId = stableMessage.id;
+            saveConfig(config);
             channel.send("Music commands channel already exists.");
         }
     }
@@ -272,7 +315,7 @@ client.on("interactionCreate", async (interaction) => {
             if (!isNaN(index) && tracks[index]) {
                 const removedTrack = tracks.splice(index, 1)[0];
                 queue.tracks.clear();
-                tracks.forEach(track => queue.addTrack(track));
+                tracks.forEach((track) => queue.addTrack(track));
                 interaction.reply({
                     content: `Removed **${removedTrack.title}** from the queue.`,
                     ephemeral: true,
@@ -295,8 +338,6 @@ client.on("interactionCreate", async (interaction) => {
         });
     }
 });
-
-// Event handler for track start
 player.events.on("playerStart", (queue, track) => {
     updateStableMessage(queue);
 });
