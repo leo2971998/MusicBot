@@ -233,7 +233,7 @@ client.on("messageCreate", async (message) => {
 
                     queue.addTrack(searchResult.tracks[0]);
                     console.log("Starting playback for the added track.");
-                    await queue.node.play();
+                    await queue.play();
                     console.log("Playback started.");
                     updateStableMessage(guildId, queue);
                 } else {
