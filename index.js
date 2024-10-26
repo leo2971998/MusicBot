@@ -30,7 +30,10 @@ const downloader = new Downloader();
 player.extractors.register(downloader);
 
 // Optional: Log registered extractors
-console.log('Registered Extractors:', player.extractors.extractors.map(ext => ext.constructor.name));
+console.log(
+    'Registered Extractors:',
+    player.extractors.registeredExtractors.map((ext) => ext.constructor.name)
+);
 
 const configFilePath = './config.json';
 
@@ -60,7 +63,9 @@ client.once('ready', async () => {
             try {
                 channel = await guild.channels.fetch(channelId);
             } catch (channelError) {
-                console.error(`Channel with ID ${channelId} not found in guild ${guildId}. Removing guild from config.`);
+                console.error(
+                    `Channel with ID ${channelId} not found in guild ${guildId}. Removing guild from config.`
+                );
                 delete config.guilds[guildId];
                 saveConfig(config);
                 continue; // Skip to the next guild
@@ -71,7 +76,9 @@ client.once('ready', async () => {
             try {
                 message = await channel.messages.fetch(stableMessageId);
             } catch (messageError) {
-                console.error(`Message with ID ${stableMessageId} not found in channel ${channelId}. Removing guild from config.`);
+                console.error(
+                    `Message with ID ${stableMessageId} not found in channel ${channelId}. Removing guild from config.`
+                );
                 delete config.guilds[guildId];
                 saveConfig(config);
                 continue; // Skip to the next guild
@@ -156,7 +163,10 @@ async function updateStableMessage(guildId, queue) {
         .setTitle('📜 Current Queue')
         .setDescription(
             tracks
-                .map((track, index) => `${index + 1}. **[${track.title}](${track.url})**`)
+                .map(
+                    (track, index) =>
+                        `${index + 1}. **[${track.title}](${track.url})**`
+                )
                 .join('\n') || 'No more songs in the queue.'
         )
         .setFooter({ text: `Total songs in queue: ${tracks.length}` });
@@ -175,9 +185,13 @@ async function clearMessages(channel, guildId) {
 
     const stableMessage = guildConfig.stableMessage;
     const messages = await channel.messages.fetch({ limit: 100 });
-    const messagesToDelete = messages.filter((msg) => msg.id !== stableMessage.id);
+    const messagesToDelete = messages.filter(
+        (msg) => msg.id !== stableMessage.id
+    );
     await channel.bulkDelete(messagesToDelete);
-    console.log(`Cleared messages in channel ${channel.id} except for stable message`);
+    console.log(
+        `Cleared messages in channel ${channel.id} except for stable message`
+    );
 }
 
 client.on('messageCreate', async (message) => {
@@ -186,7 +200,9 @@ client.on('messageCreate', async (message) => {
     const guildId = message.guild.id;
 
     if (message.content.startsWith('!setup')) {
-        let channel = message.guild.channels.cache.find((ch) => ch.name === 'leo-song-requests');
+        let channel = message.guild.channels.cache.find(
+            (ch) => ch.name === 'leo-song-requests'
+        );
 
         if (!channel) {
             try {
@@ -204,15 +220,21 @@ client.on('messageCreate', async (message) => {
                         },
                     ],
                 });
-                console.log(`Created channel leo-song-requests in guild ${guildId}`);
+                console.log(
+                    `Created channel leo-song-requests in guild ${guildId}`
+                );
             } catch (error) {
                 console.error(error);
-                return message.channel.send('Failed to create the music commands channel.');
+                return message.channel.send(
+                    'Failed to create the music commands channel.'
+                );
             }
         }
 
         try {
-            const setupMessage = await channel.send('Setting up the music bot UI...');
+            const setupMessage = await channel.send(
+                'Setting up the music bot UI...'
+            );
             config.guilds[guildId] = {
                 channelId: channel.id,
                 stableMessageId: setupMessage.id,
@@ -223,10 +245,15 @@ client.on('messageCreate', async (message) => {
             console.log(`Setup complete for guild ${guildId}`);
 
             // Update the stable message immediately
-            await updateStableMessage(guildId, { currentTrack: null, tracks: [] });
+            await updateStableMessage(guildId, {
+                currentTrack: null,
+                tracks: [],
+            });
         } catch (error) {
             console.error(error);
-            message.channel.send('Failed to set up the music commands channel.');
+            message.channel.send(
+                'Failed to set up the music commands channel.'
+            );
         }
     }
 
@@ -236,12 +263,16 @@ client.on('messageCreate', async (message) => {
             const query = args.join(' ');
 
             if (!query) {
-                return message.channel.send('Please provide a song name or YouTube link.');
+                return message.channel.send(
+                    'Please provide a song name or YouTube link.'
+                );
             }
 
             // Check if the user is in a voice channel
             if (!message.member.voice.channel) {
-                return message.channel.send('You need to be in a voice channel to play music!');
+                return message.channel.send(
+                    'You need to be in a voice channel to play music!'
+                );
             }
 
             try {
@@ -270,12 +301,16 @@ client.on('messageCreate', async (message) => {
                     } catch (error) {
                         console.error('Error joining voice channel:', error);
                         player.nodes.delete(message.guild.id);
-                        return message.channel.send('Could not join your voice channel!');
+                        return message.channel.send(
+                            'Could not join your voice channel!'
+                        );
                     }
                 }
 
                 queue.addTrack(searchResult.tracks[0]);
-                message.channel.send(`Added **${searchResult.tracks[0].title}** to the queue.`);
+                message.channel.send(
+                    `Added **${searchResult.tracks[0].title}** to the queue.`
+                );
                 console.log('Track added to the queue.');
 
                 // Update the stable message
@@ -285,7 +320,9 @@ client.on('messageCreate', async (message) => {
                 clearMessages(message.channel, guildId);
             } catch (error) {
                 console.error('Error playing track:', error);
-                message.channel.send('An error occurred while trying to play the track.');
+                message.channel.send(
+                    'An error occurred while trying to play the track.'
+                );
             }
         }
     }
@@ -366,9 +403,14 @@ client.on('interactionCreate', async (interaction) => {
 
 // Event handling
 player.events.on('error', (queue, error) => {
-    console.error(`[${queue.guild.name}] Error emitted from the queue: ${error.message}`, error);
+    console.error(
+        `[${queue.guild.name}] Error emitted from the queue: ${error.message}`,
+        error
+    );
     if (queue.metadata.channel) {
-        queue.metadata.channel.send(`An error occurred while playing the song: ${error.message}`);
+        queue.metadata.channel.send(
+            `An error occurred while playing the song: ${error.message}`
+        );
     }
 });
 
@@ -394,7 +436,9 @@ player.events.on('emptyQueue', (queue) => {
 player.events.on('trackError', (queue, error) => {
     console.error(`Track error: ${error.message}`);
     if (queue.metadata.channel) {
-        queue.metadata.channel.send(`An error occurred with the track: ${error.message}`);
+        queue.metadata.channel.send(
+            `An error occurred with the track: ${error.message}`
+        );
     }
 });
 
