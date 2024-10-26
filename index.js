@@ -51,6 +51,8 @@ function loadConfig() {
 const config = loadConfig();
 
 client.once('ready', async () => {
+    await player.extractors.loadDefault();
+
     console.log('Bot is online!');
 
     for (const guildId in config.guilds) {
