@@ -32,7 +32,7 @@ player.extractors.register(downloader);
 // Optional: Log registered extractors
 console.log(
     'Registered Extractors:',
-    player.extractors.registeredExtractors.map((ext) => ext.constructor.name)
+    Array.from(player.extractors.store.values()).map((ext) => ext.constructor.name)
 );
 
 const configFilePath = './config.json';
@@ -423,23 +423,4 @@ player.events.on('trackAdd', (queue, track) => {
     console.log(`[${queue.guild.name}] Track added: ${track.title}`);
 });
 
-player.events.on('playerError', (queue, error) => {
-    console.error(`Player error: ${error.message}`);
-});
-
-// Handle empty queue
-player.events.on('emptyQueue', (queue) => {
-    console.log(`[${queue.guild.name}] Queue has ended.`);
-    updateStableMessage(queue.guild.id, queue);
-});
-
-player.events.on('trackError', (queue, error) => {
-    console.error(`Track error: ${error.message}`);
-    if (queue.metadata.channel) {
-        queue.metadata.channel.send(
-            `An error occurred with the track: ${error.message}`
-        );
-    }
-});
-
-client.login(process.env.DISCORD_TOKEN);
+player.even
