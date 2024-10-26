@@ -312,4 +312,90 @@ client.on('interactionCreate', async (interaction) => {
             updateStableMessage(guildId, queue);
         } else if (interaction.customId === 'resume') {
             queue.node.setPaused(false);
-            interaction.reply({ content: 'Resumed 
+            interaction.reply({ content: 'Resumed music!', ephemeral: true });
+
+            // Update the stable message
+            updateStableMessage(guildId, queue);
+        } else if (interaction.customId === 'skip') {
+            queue.node.skip();
+            interaction.reply({
+                content: 'Skipped to the next song!',
+                ephemeral: true,
+            });
+
+            // Update the stable message
+            updateStableMessage(guildId, queue);
+        } else if (interaction.customId === 'stop') {
+            queue.node.stop();
+            interaction.reply({
+                content: 'Stopped the music!',
+                ephemeral: true,
+            });
+
+            // Update the stable message
+            updateStableMessage(guildId, queue);
+        } else if (interaction.customId.startsWith('remove_')) {
+            const index = parseInt(interaction.customId.split('_')[1], 10);
+            const tracks = queue.tracks.toArray(); // Convert collection to array
+            if (!isNaN(index) && tracks[index]) {
+                const removedTrack = tracks.splice(index, 1)[0];
+                queue.tracks.clear();
+                tracks.forEach((track) => queue.addTrack(track));
+                interaction.reply({
+                    content: `Removed **${removedTrack.title}** from the queue.`,
+                    ephemeral: true,
+                });
+
+                // Update the stable message
+                updateStableMessage(guildId, queue);
+            } else {
+                interaction.reply({
+                    content: 'Invalid track index.',
+                    ephemeral: true,
+                });
+            }
+        }
+    } catch (error) {
+        console.error(error);
+        interaction.reply({
+            content: 'An error occurred while processing your interaction.',
+            ephemeral: true,
+        });
+    }
+});
+
+// Correct event handling
+player.events.on('error', (queue, error) => {
+    console.error(`[${queue.guild.name}] Error emitted from the queue: ${error.message}`, error);
+    if (queue.metadata.channel) {
+        queue.metadata.channel.send(`An error occurred while playing the song: ${error.message}`);
+    }
+});
+
+player.events.on('playerStart', (queue, track) => {
+    console.log(`[${queue.guild.name}] Started playing: ${track.title}`);
+    updateStableMessage(queue.guild.id, queue);
+});
+
+player.events.on('trackAdd', (queue, track) => {
+    console.log(`[${queue.guild.name}] Track added: ${track.title}`);
+});
+
+player.events.on('playerError', (queue, error) => {
+    console.error(`Player error: ${error.message}`);
+});
+
+// Handle empty queue
+player.events.on('emptyQueue', (queue) => {
+    console.log(`[${queue.guild.name}] Queue has ended.`);
+    updateStableMessage(queue.guild.id, queue);
+});
+
+player.events.on('trackError', (queue, error) => {
+    console.error(`Track error: ${error.message}`);
+    if (queue.metadata.channel) {
+        queue.metadata.channel.send(`An error occurred with the track: ${error.message}`);
+    }
+});
+
+client.login(process.env.DISCORD_TOKEN);
