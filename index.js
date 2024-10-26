@@ -232,7 +232,9 @@ client.on("messageCreate", async (message) => {
                     }
 
                     queue.addTrack(searchResult.tracks[0]);
+                    console.log("Starting playback for the added track.");
                     await queue.node.play();
+                    console.log("Playback started.");
                     updateStableMessage(guildId, queue);
                 } else {
                     queue.addTrack(searchResult.tracks[0]);
@@ -354,6 +356,12 @@ player.on("trackAdd", (queue, track) => {
         queue.remove(track); // Remove the invalid track from the queue
         return;
     }
+});
+player.on("error", (queue, error) => {
+    console.error(`Error in queue: ${error.message}`);
+});
+player.on("playerError", (queue, error) => {
+    console.error(`Player error: ${error.message}`);
 });
 
 client.login(process.env.DISCORD_TOKEN);
