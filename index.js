@@ -25,8 +25,8 @@ const client = new Client({
 // Initialize the player
 const player = new Player(client);
 
-// Register the downloader
-player.use('YTDL', Downloader);
+// Register the downloader using the correct method
+player.extractors.register(Downloader);
 
 const configFilePath = './config.json';
 
@@ -232,6 +232,7 @@ client.on('messageCreate', async (message) => {
                         metadata: {
                             channel: message.channel,
                         },
+                        selfDeaf: true, // Ensure the bot is deafened to prevent echo
                     });
 
                     try {
@@ -243,15 +244,14 @@ client.on('messageCreate', async (message) => {
                         player.nodes.delete(message.guild.id);
                         return message.channel.send('Could not join your voice channel!');
                     }
-
-                    queue.addTrack(searchResult.tracks[0]);
-                    console.log('Track added to the queue.');
-                    updateStableMessage(guildId, queue);
-                } else {
-                    queue.addTrack(searchResult.tracks[0]);
-                    message.channel.send(`Added **${searchResult.tracks[0].title}** to the queue.`);
-                    updateStableMessage(guildId, queue);
                 }
+
+                queue.addTrack(searchResult.tracks[0]);
+                message.channel.send(`Added **${searchResult.tracks[0].title}** to the queue.`);
+                console.log('Track added to the queue.');
+
+                // Update the stable message
+                updateStableMessage(guildId, queue);
 
                 // Clear all messages in the channel except the stable message
                 clearMessages(message.channel, guildId);
