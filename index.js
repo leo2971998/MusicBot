@@ -423,4 +423,23 @@ player.events.on('trackAdd', (queue, track) => {
     console.log(`[${queue.guild.name}] Track added: ${track.title}`);
 });
 
-player.even
+player.events.on('playerError', (queue, error) => {
+    console.error(`Player error: ${error.message}`);
+});
+
+// Handle empty queue
+player.events.on('emptyQueue', (queue) => {
+    console.log(`[${queue.guild.name}] Queue has ended.`);
+    updateStableMessage(queue.guild.id, queue);
+});
+
+player.events.on('trackError', (queue, error) => {
+    console.error(`Track error: ${error.message}`);
+    if (queue.metadata.channel) {
+        queue.metadata.channel.send(
+            `An error occurred with the track: ${error.message}`
+        );
+    }
+});
+
+client.login(process.env.DISCORD_TOKEN);
