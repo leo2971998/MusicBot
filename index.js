@@ -8,10 +8,10 @@ const {
     ButtonBuilder,
     ButtonStyle,
     EmbedBuilder,
-} = require("discord.js");
-const { Player, QueryType } = require("discord-player");
-const { YouTubeExtractor, SpotifyExtractor } = require("@discord-player/extractor");
-const fs = require("fs");
+} = require('discord.js');
+const { Player, QueryType } = require('discord-player');
+const { Downloader } = require('@discord-player/downloader');
+const fs = require('fs');
 
 const client = new Client({
     intents: [
@@ -22,17 +22,13 @@ const client = new Client({
     ],
 });
 
-const player = new Player(client, {
-    ytdlOptions: {
-        quality: 'highestaudio',
-        highWaterMark: 1 << 25,
-    },
-});
+// Initialize the player
+const player = new Player(client);
 
-player.extractors.register(YouTubeExtractor, {});
-player.extractors.register(SpotifyExtractor, {});
+// Register the downloader
+player.use('YTDL', Downloader);
 
-const configFilePath = "./config.json";
+const configFilePath = './config.json';
 
 function saveConfig(config) {
     fs.writeFileSync(configFilePath, JSON.stringify(config, null, 4));
@@ -47,8 +43,8 @@ function loadConfig() {
 
 const config = loadConfig();
 
-client.once("ready", async () => {
-    console.log("Bot is online!");
+client.once('ready', async () => {
+    console.log('Bot is online!');
 
     for (const guildId in config.guilds) {
         const { channelId, stableMessageId } = config.guilds[guildId];
@@ -75,7 +71,7 @@ async function updateStableMessage(guildId, queue) {
     const currentTrack = queue.currentTrack;
     if (!currentTrack) {
         await stableMessage.edit({
-            content: "No music is currently playing.",
+            content: 'No music is currently playing.',
             embeds: [],
             components: [],
         });
@@ -84,10 +80,10 @@ async function updateStableMessage(guildId, queue) {
     }
 
     const nowPlayingEmbed = new EmbedBuilder()
-        .setTitle("🎶 Now Playing")
+        .setTitle('🎶 Now Playing')
         .setDescription(`**[${currentTrack.title}](${currentTrack.url})**`)
         .setThumbnail(currentTrack.thumbnail)
-        .setFooter({ text: "Use the buttons below to control playback." })
+        .setFooter({ text: 'Use the buttons below to control playback.' })
         .setColor(0x1db954);
 
     const tracks = queue.tracks.toArray();
@@ -113,18 +109,30 @@ async function updateStableMessage(guildId, queue) {
     }
 
     const controlButtons = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("pause").setLabel("⏸️ Pause").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("resume").setLabel("▶️ Play").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("skip").setLabel("⏭️ Skip").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("stop").setLabel("⏹️ Stop").setStyle(ButtonStyle.Primary)
+        new ButtonBuilder()
+            .setCustomId('pause')
+            .setLabel('⏸️ Pause')
+            .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+            .setCustomId('resume')
+            .setLabel('▶️ Play')
+            .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+            .setCustomId('skip')
+            .setLabel('⏭️ Skip')
+            .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+            .setCustomId('stop')
+            .setLabel('⏹️ Stop')
+            .setStyle(ButtonStyle.Primary)
     );
 
     const queueEmbed = new EmbedBuilder()
-        .setTitle("📜 Current Queue")
+        .setTitle('📜 Current Queue')
         .setDescription(
             tracks
                 .map((track, index) => `${index + 1}. **[${track.title}](${track.url})**`)
-                .join("\n") || "No more songs in the queue."
+                .join('\n') || 'No more songs in the queue.'
         )
         .setFooter({ text: `Total songs in queue: ${tracks.length}` });
 
@@ -147,18 +155,18 @@ async function clearMessages(channel, guildId) {
     console.log(`Cleared messages in channel ${channel.id} except for stable message`);
 }
 
-client.on("messageCreate", async (message) => {
+client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
 
     const guildId = message.guild.id;
 
-    if (message.content.startsWith("!setup")) {
-        let channel = message.guild.channels.cache.find((ch) => ch.name === "leo-song-requests");
+    if (message.content.startsWith('!setup')) {
+        let channel = message.guild.channels.cache.find((ch) => ch.name === 'leo-song-requests');
 
         if (!channel) {
             try {
                 channel = await message.guild.channels.create({
-                    name: "leo-song-requests",
+                    name: 'leo-song-requests',
                     type: ChannelType.GuildText,
                     permissionOverwrites: [
                         {
@@ -174,33 +182,38 @@ client.on("messageCreate", async (message) => {
                 console.log(`Created channel leo-song-requests in guild ${guildId}`);
             } catch (error) {
                 console.error(error);
-                return message.channel.send("Failed to create the music commands channel.");
+                return message.channel.send('Failed to create the music commands channel.');
             }
         }
 
         try {
-            const setupMessage = await channel.send("Setting up the music bot UI...");
+            const setupMessage = await channel.send('Setting up the music bot UI...');
             config.guilds[guildId] = {
                 channelId: channel.id,
                 stableMessageId: setupMessage.id,
-                stableMessage: setupMessage // Ensuring the message is also saved directly
+                stableMessage: setupMessage, // Ensuring the message is also saved directly
             };
             saveConfig(config);
-            message.channel.send("Music commands channel setup complete.");
+            message.channel.send('Music commands channel setup complete.');
             console.log(`Setup complete for guild ${guildId}`);
         } catch (error) {
             console.error(error);
-            message.channel.send("Failed to set up the music commands channel.");
+            message.channel.send('Failed to set up the music commands channel.');
         }
     }
 
-    if (message.channel.name === "leo-song-requests") {
-        if (message.content.startsWith("play")) {
-            const args = message.content.split(" ").slice(1);
-            const query = args.join(" ");
+    if (message.channel.name === 'leo-song-requests') {
+        if (message.content.startsWith('play')) {
+            const args = message.content.split(' ').slice(1);
+            const query = args.join(' ');
 
             if (!query) {
-                return message.channel.send("Please provide a song name or YouTube link.");
+                return message.channel.send('Please provide a song name or YouTube link.');
+            }
+
+            // Check if the user is in a voice channel
+            if (!message.member.voice.channel) {
+                return message.channel.send('You need to be in a voice channel to play music!');
             }
 
             try {
@@ -210,7 +223,7 @@ client.on("messageCreate", async (message) => {
                 });
 
                 if (!searchResult || !searchResult.tracks.length) {
-                    return message.channel.send("No results found!");
+                    return message.channel.send('No results found!');
                 }
 
                 let queue = player.nodes.get(message.guild.id);
@@ -228,19 +241,15 @@ client.on("messageCreate", async (message) => {
                     } catch (error) {
                         console.error('Error joining voice channel:', error);
                         player.nodes.delete(message.guild.id);
-                        return message.channel.send("Could not join your voice channel!");
+                        return message.channel.send('Could not join your voice channel!');
                     }
 
                     queue.addTrack(searchResult.tracks[0]);
-                    console.log("Starting playback for the added track.");
-                    await queue.node.play();
-                    console.log("Playback started.");
+                    console.log('Track added to the queue.');
                     updateStableMessage(guildId, queue);
                 } else {
                     queue.addTrack(searchResult.tracks[0]);
                     message.channel.send(`Added **${searchResult.tracks[0].title}** to the queue.`);
-
-                    // Update the stable message
                     updateStableMessage(guildId, queue);
                 }
 
@@ -248,56 +257,57 @@ client.on("messageCreate", async (message) => {
                 clearMessages(message.channel, guildId);
             } catch (error) {
                 console.error('Error playing track:', error);
-                message.channel.send("An error occurred while trying to play the track.");
+                message.channel.send('An error occurred while trying to play the track.');
             }
         }
     }
 });
 
-client.on("interactionCreate", async (interaction) => {
+client.on('interactionCreate', async (interaction) => {
     if (!interaction.isButton()) return;
 
     const queue = player.nodes.get(interaction.guildId);
-    if (!queue) return interaction.reply({
-        content: "No music is being played!",
-        ephemeral: true,
-    });
+    if (!queue)
+        return interaction.reply({
+            content: 'No music is being played!',
+            ephemeral: true,
+        });
 
     try {
         const guildId = interaction.guildId;
 
-        if (interaction.customId === "pause") {
+        if (interaction.customId === 'pause') {
             queue.node.setPaused(true);
-            interaction.reply({ content: "Paused music!", ephemeral: true });
+            interaction.reply({ content: 'Paused music!', ephemeral: true });
 
-            // Update the button to "Resume"
+            // Update the stable message
             updateStableMessage(guildId, queue);
-        } else if (interaction.customId === "resume") {
+        } else if (interaction.customId === 'resume') {
             queue.node.setPaused(false);
-            interaction.reply({ content: "Resumed music!", ephemeral: true });
+            interaction.reply({ content: 'Resumed music!', ephemeral: true });
 
-            // Update the button to "Pause"
+            // Update the stable message
             updateStableMessage(guildId, queue);
-        } else if (interaction.customId === "skip") {
+        } else if (interaction.customId === 'skip') {
             queue.node.skip();
             interaction.reply({
-                content: "Skipped to next song!",
+                content: 'Skipped to the next song!',
                 ephemeral: true,
             });
 
             // Update the stable message
             updateStableMessage(guildId, queue);
-        } else if (interaction.customId === "stop") {
+        } else if (interaction.customId === 'stop') {
             queue.node.stop();
             interaction.reply({
-                content: "Stopped the music!",
+                content: 'Stopped the music!',
                 ephemeral: true,
             });
 
             // Update the stable message
             updateStableMessage(guildId, queue);
-        } else if (interaction.customId.startsWith("remove_")) {
-            const index = parseInt(interaction.customId.split("_")[1], 10);
+        } else if (interaction.customId.startsWith('remove_')) {
+            const index = parseInt(interaction.customId.split('_')[1], 10);
             const tracks = queue.tracks.toArray(); // Convert collection to array
             if (!isNaN(index) && tracks[index]) {
                 const removedTrack = tracks.splice(index, 1)[0];
@@ -312,7 +322,7 @@ client.on("interactionCreate", async (interaction) => {
                 updateStableMessage(guildId, queue);
             } else {
                 interaction.reply({
-                    content: "Invalid track index.",
+                    content: 'Invalid track index.',
                     ephemeral: true,
                 });
             }
@@ -320,47 +330,30 @@ client.on("interactionCreate", async (interaction) => {
     } catch (error) {
         console.error(error);
         interaction.reply({
-            content: "An error occurred while processing your interaction.",
+            content: 'An error occurred while processing your interaction.',
             ephemeral: true,
         });
     }
 });
 
-// Error handling for player
-player.on("error", (queue, error) => {
-    console.error(`[${queue.guild.name}] Error emitted from the queue: ${error.message}`, error.stack); // Log error stack for deeper insight
+// Correct event handling
+player.events.on('error', (queue, error) => {
+    console.error(`[${queue.guild.name}] Error emitted from the queue: ${error.message}`, error);
     if (queue.metadata.channel) {
         queue.metadata.channel.send(`An error occurred while playing the song: ${error.message}`);
     }
 });
 
-player.events.on("playerStart", (queue, track) => {
-    if (!track || !track.url) {
-        console.error(`[${queue.guild.name}] Track is undefined or has no URL!`);
-        if (queue.metadata.channel) {
-            queue.metadata.channel.send("The selected track is invalid or inaccessible.");
-        }
-        return;
-    }
+player.events.on('playerStart', (queue, track) => {
     console.log(`[${queue.guild.name}] Started playing: ${track.title}`);
     updateStableMessage(queue.guild.id, queue);
 });
 
-player.on("trackAdd", (queue, track) => {
+player.events.on('trackAdd', (queue, track) => {
     console.log(`[${queue.guild.name}] Track added: ${track.title}`);
-    if (!track || !track.url) {
-        console.error(`[${queue.guild.name}] Added track is undefined or has no URL!`);
-        if (queue.metadata.channel) {
-            queue.metadata.channel.send("The added track is invalid or inaccessible.");
-        }
-        queue.remove(track); // Remove the invalid track from the queue
-        return;
-    }
 });
-player.on("error", (queue, error) => {
-    console.error(`Error in queue: ${error.message}`);
-});
-player.on("playerError", (queue, error) => {
+
+player.events.on('playerError', (queue, error) => {
     console.error(`Player error: ${error.message}`);
 });
 
