@@ -364,7 +364,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// Correct event handling
+// Event handling
 player.events.on('error', (queue, error) => {
     console.error(`[${queue.guild.name}] Error emitted from the queue: ${error.message}`, error);
     if (queue.metadata.channel) {
