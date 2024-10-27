@@ -120,19 +120,11 @@ def run_bot():
             print(e)
 
     @client.command(name="queue")
-async def queue(ctx, *, url=None):
-    if url:
-        # Add song to the queue if a URL is provided
+    async def queue(ctx, *, url):
         if ctx.guild.id not in queues:
             queues[ctx.guild.id] = []
         queues[ctx.guild.id].append(url)
         await ctx.send("Added to queue!")
-
-    if ctx.guild.id in queues and queues[ctx.guild.id]:
-        # Show the queue dropdown if there are songs in the queue
         await ctx.send("Here is your queue:", view=QueueDropdown(ctx, queues[ctx.guild.id]))
-    else:
-        # Inform the user if the queue is empty
-        await ctx.send("The queue is currently empty.")
 
     client.run(TOKEN)
