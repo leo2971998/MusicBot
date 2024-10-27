@@ -143,35 +143,32 @@ async def update_stable_message(guild_id):
     )
     queue_embed.set_footer(text=f"Total songs in queue: {len(queue)}")
 
+    # Create a View for all buttons
+    view = View()
+
     # Control Buttons
-    controls = View()
-    controls.add_item(Button(label='⏸️ Pause', style=ButtonStyle.primary, custom_id='pause'))
-    controls.add_item(Button(label='▶️ Play', style=ButtonStyle.primary, custom_id='resume'))
-    controls.add_item(Button(label='⏭️ Skip', style=ButtonStyle.primary, custom_id='skip'))
-    controls.add_item(Button(label='⏹️ Stop', style=ButtonStyle.primary, custom_id='stop'))
+    view.add_item(Button(label='⏸️ Pause', style=ButtonStyle.primary, custom_id='pause'))
+    view.add_item(Button(label='▶️ Play', style=ButtonStyle.primary, custom_id='resume'))
+    view.add_item(Button(label='⏭️ Skip', style=ButtonStyle.primary, custom_id='skip'))
+    view.add_item(Button(label='⏹️ Stop', style=ButtonStyle.primary, custom_id='stop'))
 
     # Remove Buttons for Queue
-    remove_buttons = View()
+    # Discord allows max 5 buttons per row, and max 25 components per view
+    # So we need to create the buttons and ensure they are added properly
+    total_components = len(view.children)
+    max_components = 25
     for idx, song in enumerate(queue):
-        remove_buttons.add_item(
-            Button(
-                label=f"❌ Remove {idx + 1}",
-                style=ButtonStyle.secondary,
-                custom_id=f'remove_{idx}'
-            )
+        if total_components >= max_components:
+            break  # Cannot add more components
+        button = Button(
+            label=f"❌ Remove {idx + 1}",
+            style=ButtonStyle.secondary,
+            custom_id=f'remove_{idx}'
         )
-        if (idx + 1) % 5 == 0:
-            # Discord allows max 5 buttons per row
-            stable_message_view = controls.copy()
-            stable_message_view.add_item(remove_buttons)
-            remove_buttons = View()
+        view.add_item(button)
+        total_components += 1
 
-    # Update the stable message
-    if remove_buttons.children:
-        # Add any remaining remove buttons
-        controls.add_item(remove_buttons)
-
-    await stable_message.edit(content=None, embeds=[now_playing_embed, queue_embed], view=controls)
+    await stable_message.edit(content=None, embeds=[now_playing_embed, queue_embed], view=view)
     save_guilds_data()
 
 # Clear messages in the channel except the stable message
@@ -221,7 +218,7 @@ async def play_song(ctx, song_info):
 async def play(ctx, *, link):
     try:
         # Connect to the voice channel if not already connected
-        if ctx.guild.id not in voice_clients or not voice_clients[str(ctx.guild.id)].is_connected():
+        if str(ctx.guild.id) not in voice_clients or not voice_clients[str(ctx.guild.id)].is_connected():
             if ctx.author.voice and ctx.author.voice.channel:
                 voice_client = await ctx.author.voice.channel.connect()
                 voice_clients[str(ctx.guild.id)] = voice_client
@@ -236,6 +233,9 @@ async def play(ctx, *, link):
             query_string = urllib.parse.urlencode({'search_query': link})
             content = urllib.request.urlopen(youtube_results_url + query_string)
             search_results = re.findall(r'/watch\?v=(.{11})', content.read().decode())
+            if not search_results:
+                await ctx.send("No results found for your query.")
+                return
             link = youtube_watch_url + search_results[0]
 
         # Extract audio and play
@@ -404,6 +404,9 @@ async def queue_command(ctx, *, link):
             query_string = urllib.parse.urlencode({'search_query': link})
             content = urllib.request.urlopen(youtube_results_url + query_string)
             search_results = re.findall(r'/watch\?v=(.{11})', content.read().decode())
+            if not search_results:
+                await ctx.send("No results found for your query.")
+                return
             link = youtube_watch_url + search_results[0]
 
         # Extract audio info
