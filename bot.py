@@ -260,13 +260,11 @@ async def on_interaction(interaction):
         if voice_client and voice_client.is_playing():
             voice_client.pause()
             await interaction.response.send_message('Paused the music.', ephemeral=True)
-        else:
-            await interaction.response.send_message('Nothing is playing.', ephemeral=True)
     elif custom_id == 'resume':
         if voice_client and voice_client.is_paused():
             voice_client.resume()
             await interaction.response.send_message('Resumed the music.', ephemeral=True)
-        elif custom_id == 'skip':
+    elif custom_id == 'skip':
         if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
             voice_client.stop()
             await interaction.response.send_message('Skipped the song.', ephemeral=True)
@@ -292,8 +290,6 @@ async def clear_queue(ctx):
     if guild_id in queues:
         queues[guild_id].clear()
         await ctx.send("Queue cleared!")
-    else:
-        await ctx.send("There is no queue to clear.")
     await update_stable_message(guild_id)
 
 # Pause the current song
