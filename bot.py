@@ -74,23 +74,6 @@ def run_bot():
             except Exception as e:
                 await interaction.response.send_message(str(e), ephemeral=True)
 
-    # Queue select dropdown
-    class QueueDropdown(View):
-        def __init__(self, ctx, queue):
-            super().__init__()
-            self.ctx = ctx
-            options = [
-                SelectOption(label=f"{i+1}. {song[:80]}", description="Queued Song", value=song)
-                for i, song in enumerate(queue)
-            ]
-            self.select = Select(placeholder="Select a song from the queue", options=options, min_values=1, max_values=1)
-            self.select.callback = self.select_callback
-            self.add_item(self.select)
-
-        async def select_callback(self, interaction):
-            selected_song = self.select.values[0]
-            await interaction.response.send_message(f"Selected song: {selected_song}")
-
     @client.command(name="play")
     async def play(ctx, *, link):
         try:
@@ -110,10 +93,11 @@ def run_bot():
             data = await loop.run_in_executor(None, lambda: ytdl.extract_info(link, download=False))
 
             song = data['url']
+            player = discord.FFmpegOpusAudio(song, **ffmpeg_options)
+
             title = data.get('title', 'Unknown Title')
             await send_song_embed(ctx, title, link)
 
-            player = discord.FFmpegOpusAudio(song, **ffmpeg_options)
             voice_clients[ctx.guild.id].play(player, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
             await ctx.send(view=PlaybackControls(ctx))  # Show playback buttons
         except Exception as e:
@@ -125,6 +109,5 @@ def run_bot():
             queues[ctx.guild.id] = []
         queues[ctx.guild.id].append(url)
         await ctx.send("Added to queue!")
-        await ctx.send("Here is your queue:", view=QueueDropdown(ctx, queues[ctx.guild.id]))
 
     client.run(TOKEN)
