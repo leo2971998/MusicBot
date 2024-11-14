@@ -100,6 +100,8 @@ async def setup(ctx):
     await ctx.send('Music commands channel setup complete.')
     # Initialize the stable message content
     await update_stable_message(guild_id)
+    # Clear other messages
+    await clear_channel_messages(channel, stable_message.id)
 
 # Update the stable message with current song and queue
 async def update_stable_message(guild_id):
@@ -173,18 +175,17 @@ async def update_stable_message(guild_id):
 
 # Clear messages in the channel except the stable message
 async def clear_channel_messages(channel, stable_message_id):
-    messages = await channel.history(limit=100).flatten()
-    messages_to_delete = [msg for msg in messages if msg.id != stable_message_id]
-    if messages_to_delete:
-        await channel.delete_messages(messages_to_delete)
+    async for message in channel.history(limit=100):
+        if message.id != stable_message_id:
+            await message.delete()
 
 # Play the next song in the queue
-async def play_next(ctx):
-    guild_id = str(ctx.guild.id)
+async def play_next(guild_id):
+    guild_id = str(guild_id)
     if queues.get(guild_id):
         song_info = queues[guild_id].pop(0)
         client.guilds_data[guild_id]['current_song'] = song_info
-        await play_song(ctx, song_info)
+        await play_song(guild_id, song_info)
     else:
         # No more songs in the queue
         client.guilds_data[guild_id]['current_song'] = None
@@ -195,37 +196,45 @@ async def play_next(ctx):
         await update_stable_message(guild_id)
 
 # Function to play a song
-async def play_song(ctx, song_info):
-    guild_id = str(ctx.guild.id)
+async def play_song(guild_id, song_info):
+    guild_id = str(guild_id)
     voice_client = voice_clients[guild_id]
     song_url = song_info['url']
     player = discord.FFmpegOpusAudio(song_url, **ffmpeg_options)
     if not voice_client.is_playing():
-        voice_client.play(player, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
-        await ctx.send(f"Now playing: {song_info.get('title', 'Unknown title')}")
+        voice_client.play(
+            player,
+            after=lambda e: asyncio.run_coroutine_threadsafe(play_next(guild_id), client.loop)
+        )
+        channel_id = client.guilds_data[guild_id]['channel_id']
+        channel = client.get_channel(int(channel_id))
+        await channel.send(f"Now playing: {song_info.get('title', 'Unknown title')}")
         client.guilds_data[guild_id]['current_song'] = song_info
     else:
         # Add to queue
         if guild_id not in queues:
             queues[guild_id] = []
         queues[guild_id].append(song_info)
-        await ctx.send(f"Added to queue: {song_info.get('title', 'Unknown title')}")
+        channel_id = client.guilds_data[guild_id]['channel_id']
+        channel = client.get_channel(int(channel_id))
+        await channel.send(f"Added to queue: {song_info.get('title', 'Unknown title')}")
     await update_stable_message(guild_id)
     save_guilds_data()
 
 # Play command to play a song or add to the queue
 @client.command(name="play")
 async def play(ctx, *, link):
+    guild_id = str(ctx.guild.id)
     # Connect to the voice channel if not already connected
-    if str(ctx.guild.id) not in voice_clients or not voice_clients[str(ctx.guild.id)].is_connected():
+    if guild_id not in voice_clients or not voice_clients[guild_id].is_connected():
         if ctx.author.voice and ctx.author.voice.channel:
             voice_client = await ctx.author.voice.channel.connect()
-            voice_clients[str(ctx.guild.id)] = voice_client
+            voice_clients[guild_id] = voice_client
         else:
             await ctx.send("You are not connected to a voice channel.")
             return
     else:
-        voice_client = voice_clients[str(ctx.guild.id)]
+        voice_client = voice_clients[guild_id]
 
     # Search and retrieve YouTube link if not already a direct link
     if 'youtube.com/watch?v=' not in link and 'youtu.be/' not in link:
@@ -248,7 +257,6 @@ async def play(ctx, *, link):
         return
 
     # Initialize guild data if not present
-    guild_id = str(ctx.guild.id)
     if not hasattr(client, 'guilds_data'):
         client.guilds_data = {}
     if guild_id not in client.guilds_data:
@@ -257,7 +265,7 @@ async def play(ctx, *, link):
     # Play or queue the song
     if not voice_client.is_playing():
         client.guilds_data[guild_id]['current_song'] = song_info
-        await play_song(ctx, song_info)
+        await play_song(guild_id, song_info)
     else:
         if guild_id not in queues:
             queues[guild_id] = []
@@ -299,10 +307,12 @@ async def on_interaction(interaction):
         if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
             voice_client.stop()
             await interaction.response.send_message('Skipped the song.', ephemeral=True)
+            await play_next(guild_id)
         else:
             await interaction.response.send_message('Nothing is playing.', ephemeral=True)
     elif custom_id == 'stop':
         if voice_client:
+            voice_client.stop()
             await voice_client.disconnect()
             del voice_clients[guild_id]
             queues.pop(guild_id, None)
@@ -402,6 +412,29 @@ async def queue_command(ctx, *, link):
     queues[guild_id].append(song_info)
     await ctx.send(f"Added to queue: {song_info.get('title', 'Unknown title')}")
     await update_stable_message(guild_id)
+
+# Event handler for message deletion and processing song requests
+@client.event
+async def on_message(message):
+    if message.author == client.user:
+        return  # Ignore messages from the bot itself
+
+    guild_id = str(message.guild.id)
+    guild_data = client.guilds_data.get(guild_id)
+    if guild_data:
+        channel_id = guild_data.get('channel_id')
+        if message.channel.id == int(channel_id):
+            # Delete the message
+            await message.delete()
+            # Treat the message content as a song request
+            ctx = await client.get_context(message)
+            song_request = message.content
+            await play(ctx, link=song_request)
+        else:
+            # Process commands in other channels as usual
+            await client.process_commands(message)
+    else:
+        await client.process_commands(message)
 
 # Run the bot
 client.run(TOKEN)
