@@ -18,7 +18,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
 intents.members = True
-client = commands.Bot(command_prefix=".", intents=intents)  # Added command_prefix
+client = commands.Bot(command_prefix=".", intents=intents)
 client.guilds_data = {}  # Initialize guilds_data here
 
 # Define global variables for managing queues and voice clients
@@ -63,7 +63,7 @@ def load_guilds_data():
 # Bot ready event
 @client.event
 async def on_ready():
-    await client.tree.sync()  # Sync slash commands globally
+    await client.tree.sync()
     print(f'{client.user} is now jamming!')
     load_guilds_data()
     for guild_id, guild_data in client.guilds_data.items():
@@ -82,7 +82,6 @@ async def on_ready():
 
 # Setup command to create the music channel and stable message
 @client.tree.command(name="setup", description="Set up the music channel and bot UI")
-@discord.app_commands.describe()
 @commands.has_permissions(manage_channels=True)
 async def setup(interaction: discord.Interaction):
     guild_id = str(interaction.guild.id)
@@ -245,20 +244,21 @@ async def play_song(guild_id, song_info):
     await update_stable_message(guild_id)
     save_guilds_data()
 
-# Slash command to play a song or add to the queue
-@client.tree.command(name="play", description="Play a song or add it to the queue")
-@discord.app_commands.describe(link="The URL or name of the song to play")
-async def play_command(interaction: discord.Interaction, link: str):
-    await interaction.response.defer()
-    guild_id = str(interaction.guild.id)
+# Helper function to process play requests
+async def process_play_request(user, guild, channel, link, interaction=None):
+    guild_id = str(guild.id)
     # Connect to the voice channel if not already connected
     voice_client = voice_clients.get(guild_id)
     if not voice_client or not voice_client.is_connected():
-        if interaction.user.voice and interaction.user.voice.channel:
-            voice_client = await interaction.user.voice.channel.connect()
+        if user.voice and user.voice.channel:
+            voice_client = await user.voice.channel.connect()
             voice_clients[guild_id] = voice_client
         else:
-            await interaction.followup.send("❌ You are not connected to a voice channel.", ephemeral=True)
+            msg = "❌ You are not connected to a voice channel."
+            if interaction:
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await channel.send(msg)
             return
     else:
         voice_client = voice_clients[guild_id]
@@ -271,11 +271,19 @@ async def play_command(interaction: discord.Interaction, link: str):
                 html_content = response.read().decode()
             search_results = re.findall(r'/watch\?v=(.{11})', html_content)
             if not search_results:
-                await interaction.followup.send("❌ No results found for your query.", ephemeral=True)
+                msg = "❌ No results found for your query."
+                if interaction:
+                    await interaction.followup.send(msg, ephemeral=True)
+                else:
+                    await channel.send(msg)
                 return
             link = youtube_watch_url + search_results[0]
         except Exception as e:
-            await interaction.followup.send(f"❌ Error searching for the song: {e}", ephemeral=True)
+            msg = f"❌ Error searching for the song: {e}"
+            if interaction:
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await channel.send(msg)
             return
 
     # Extract audio and play
@@ -283,7 +291,11 @@ async def play_command(interaction: discord.Interaction, link: str):
     try:
         data = await loop.run_in_executor(None, lambda: ytdl.extract_info(link, download=False))
     except Exception as e:
-        await interaction.followup.send(f"❌ Error extracting song information: {e}", ephemeral=True)
+        msg = f"❌ Error extracting song information: {e}"
+        if interaction:
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await channel.send(msg)
         return
 
     # Handle playlist
@@ -299,7 +311,11 @@ async def play_command(interaction: discord.Interaction, link: str):
                 queues[guild_id] = []
             queues[guild_id].append(song_info)
             added_songs.append(song_info['title'])
-        await interaction.followup.send(f"🎶 Added playlist **{data.get('title', 'Unknown playlist')}** with {len(added_songs)} songs to the queue.", ephemeral=False)
+        msg = f"🎶 Added playlist **{data.get('title', 'Unknown playlist')}** with {len(added_songs)} songs to the queue."
+        if interaction:
+            await interaction.followup.send(msg)
+        else:
+            await channel.send(msg)
     else:
         song_info = data  # Store the entire data for later use
 
@@ -311,12 +327,20 @@ async def play_command(interaction: discord.Interaction, link: str):
         if not voice_client.is_playing():
             client.guilds_data[guild_id]['current_song'] = song_info
             await play_song(guild_id, song_info)
-            await interaction.followup.send(f"🎶 Now playing: **{song_info.get('title', 'Unknown title')}**", ephemeral=False)
+            msg = f"🎶 Now playing: **{song_info.get('title', 'Unknown title')}**"
+            if interaction:
+                await interaction.followup.send(msg)
+            else:
+                await channel.send(msg)
         else:
             if guild_id not in queues:
                 queues[guild_id] = []
             queues[guild_id].append(song_info)
-            await interaction.followup.send(f"➕ Added to queue: **{song_info.get('title', 'Unknown title')}**", ephemeral=False)
+            msg = f"➕ Added to queue: **{song_info.get('title', 'Unknown title')}**"
+            if interaction:
+                await interaction.followup.send(msg)
+            else:
+                await channel.send(msg)
 
     # Clear messages except the stable message
     guild_data = client.guilds_data.get(guild_id)
@@ -328,6 +352,13 @@ async def play_command(interaction: discord.Interaction, link: str):
             await clear_channel_messages(channel, int(stable_message_id))
 
     await update_stable_message(guild_id)
+
+# Slash command to play a song or add to the queue
+@client.tree.command(name="play", description="Play a song or add it to the queue")
+@discord.app_commands.describe(link="The URL or name of the song to play")
+async def play_command(interaction: discord.Interaction, link: str):
+    await interaction.response.defer(ephemeral=False)
+    await process_play_request(interaction.user, interaction.guild, interaction.channel, link, interaction=interaction)
 
 # Pause command
 @client.tree.command(name="pause", description="Pause the currently playing song")
@@ -468,21 +499,10 @@ async def on_message(message):
             except discord.HTTPException as e:
                 print(f"Failed to delete message {message.id}: {e}")
             # Treat the message content as a song request
-            # Simulate an interaction for the slash command
-            class FakeInteraction:
-                def __init__(self, user, guild, channel):
-                    self.user = user
-                    self.guild = guild
-                    self.channel = channel
-
-                async def response_defer(self):
-                    pass
-
-                async def followup_send(self, content, ephemeral=False):
-                    await self.channel.send(content)
-
-            interaction = FakeInteraction(message.author, message.guild, message.channel)
-            await play_command(interaction, link=message.content)
+            await process_play_request(message.author, message.guild, message.channel, message.content)
+        else:
+            # Process commands in other channels as usual
+            await client.process_commands(message)
     else:
         await client.process_commands(message)
 
