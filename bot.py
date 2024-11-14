@@ -11,7 +11,7 @@ import json
 
 # Load the environment variables
 load_dotenv()
-TOKEN = os.getenv("discord_token")
+TOKEN = os.getenv("discord_token") or "YOUR_DISCORD_BOT_TOKEN"
 
 # Set up bot intents and command prefix
 intents = discord.Intents.default()
@@ -19,6 +19,7 @@ intents.message_content = True
 intents.guilds = True
 intents.members = True
 client = commands.Bot(command_prefix=".", intents=intents)
+client.guilds_data = {}  # Initialize guilds_data here
 
 # Define global variables for managing queues and voice clients
 queues = {}
@@ -39,13 +40,23 @@ ffmpeg_options = {
 DATA_FILE = 'guilds_data.json'
 
 def save_guilds_data():
+    serializable_data = {}
+    for guild_id, guild_data in client.guilds_data.items():
+        # Create a copy excluding non-serializable items
+        data_to_save = guild_data.copy()
+        data_to_save.pop('stable_message', None)
+        serializable_data[guild_id] = data_to_save
     with open(DATA_FILE, 'w') as f:
-        json.dump(client.guilds_data, f)
+        json.dump(serializable_data, f)
 
 def load_guilds_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'r') as f:
-            client.guilds_data = json.load(f)
+            try:
+                client.guilds_data = json.load(f)
+            except json.JSONDecodeError:
+                print("Invalid JSON in guilds_data.json. Initializing with empty data.")
+                client.guilds_data = {}
     else:
         client.guilds_data = {}
 
@@ -88,15 +99,13 @@ async def setup(ctx):
     # Send the stable message
     stable_message = await channel.send('Setting up the music bot UI...')
     # Store the stable message and channel ID
-    if not hasattr(client, 'guilds_data'):
-        client.guilds_data = {}
     client.guilds_data[guild_id] = {
         'channel_id': channel.id,
         'stable_message_id': stable_message.id,
-        'stable_message': stable_message,
         'current_song': None
     }
     save_guilds_data()
+    client.guilds_data[guild_id]['stable_message'] = stable_message
     await ctx.send('Music commands channel setup complete.')
     # Initialize the stable message content
     await update_stable_message(guild_id)
@@ -155,8 +164,6 @@ async def update_stable_message(guild_id):
     view.add_item(Button(label='⏹️ Stop', style=ButtonStyle.primary, custom_id='stop'))
 
     # Remove Buttons for Queue
-    # Discord allows max 5 buttons per row, and max 25 components per view
-    # So we need to create the buttons and ensure they are added properly
     total_components = len(view.children)
     max_components = 25
     for idx, song in enumerate(queue):
@@ -202,9 +209,18 @@ async def play_song(guild_id, song_info):
     song_url = song_info['url']
     player = discord.FFmpegOpusAudio(song_url, **ffmpeg_options)
     if not voice_client.is_playing():
+        def after_playing(error):
+            if error:
+                print(f"Error occurred while playing: {error}")
+            future = asyncio.run_coroutine_threadsafe(play_next(guild_id), client.loop)
+            try:
+                future.result()
+            except Exception as e:
+                print(f"Error in play_next: {e}")
+
         voice_client.play(
             player,
-            after=lambda e: asyncio.run_coroutine_threadsafe(play_next(guild_id), client.loop)
+            after=after_playing
         )
         channel_id = client.guilds_data[guild_id]['channel_id']
         channel = client.get_channel(int(channel_id))
@@ -257,8 +273,6 @@ async def play(ctx, *, link):
         return
 
     # Initialize guild data if not present
-    if not hasattr(client, 'guilds_data'):
-        client.guilds_data = {}
     if guild_id not in client.guilds_data:
         client.guilds_data[guild_id] = {}
 
