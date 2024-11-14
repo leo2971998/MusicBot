@@ -27,7 +27,13 @@ voice_clients = {}
 youtube_base_url = 'https://www.youtube.com/'
 youtube_results_url = youtube_base_url + 'results?'
 youtube_watch_url = youtube_base_url + 'watch?v='
-yt_dl_options = {"format": "bestaudio/best", "noplaylist": False}  # Allow playlists
+
+# Adjusted yt_dl_options to handle playlists correctly
+yt_dl_options = {
+    "format": "bestaudio/best",
+    "noplaylist": False,
+    "extract_flat": False
+}
 ytdl = yt_dlp.YoutubeDL(yt_dl_options)
 
 # FFmpeg options for audio playback
@@ -263,8 +269,9 @@ async def process_play_request(user, guild, channel, link, interaction=None):
     else:
         voice_client = voice_clients[guild_id]
 
-    # Search and retrieve YouTube link if not already a direct link or playlist
-    if ('youtube.com/watch?v=' not in link and 'youtu.be/' not in link) and ('youtube.com/playlist?' not in link):
+    # Adjusted playlist detection
+    if 'list=' not in link and 'watch?v=' not in link and 'youtu.be/' not in link:
+        # Treat as search query
         query_string = urllib.parse.urlencode({'search_query': link})
         try:
             with urllib.request.urlopen(youtube_results_url + query_string) as response:
@@ -317,6 +324,7 @@ async def process_play_request(user, guild, channel, link, interaction=None):
         else:
             await channel.send(msg)
     else:
+        # Single video
         song_info = data  # Store the entire data for later use
 
         # Initialize guild data if not present
