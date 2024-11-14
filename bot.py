@@ -31,8 +31,9 @@ youtube_watch_url = youtube_base_url + 'watch?v='
 # Adjusted yt_dl_options to handle playlists correctly
 yt_dl_options = {
     "format": "bestaudio/best",
-    "noplaylist": False,
-    "extract_flat": False
+    "noplaylist": False,  # Enable playlist extraction
+    "extract_flat": False,
+    "lazy_playlist": False
 }
 ytdl = yt_dlp.YoutubeDL(yt_dl_options)
 
@@ -212,7 +213,7 @@ async def play_next(guild_id):
         voice_client = voice_clients.get(guild_id)
         if voice_client:
             await voice_client.disconnect()
-            del voice_clients[guild_id]
+            voice_clients.pop(guild_id, None)  # Safely remove the voice client
         await update_stable_message(guild_id)
 
 # Function to play a song
@@ -312,12 +313,18 @@ async def process_play_request(user, guild, channel, link, interaction=None):
         for entry in playlist_entries:
             if entry is None:
                 continue  # Skip if entry is None
-            song_info = entry
-            # Add to queue
-            if guild_id not in queues:
-                queues[guild_id] = []
-            queues[guild_id].append(song_info)
-            added_songs.append(song_info['title'])
+            # Re-extract the full metadata for each entry
+            try:
+                song_url = f"https://www.youtube.com/watch?v={entry['id']}"
+                song_info = await loop.run_in_executor(None, lambda: ytdl.extract_info(song_url, download=False))
+                # Add to queue
+                if guild_id not in queues:
+                    queues[guild_id] = []
+                queues[guild_id].append(song_info)
+                added_songs.append(song_info['title'])
+            except Exception as e:
+                print(f"Error extracting song info for an entry: {e}")
+                continue
         msg = f"🎶 Added playlist **{data.get('title', 'Unknown playlist')}** with {len(added_songs)} songs to the queue."
         if interaction:
             await interaction.followup.send(msg)
@@ -400,7 +407,7 @@ async def stop_command(interaction: discord.Interaction):
     if voice_client:
         voice_client.stop()
         await voice_client.disconnect()
-        del voice_clients[guild_id]
+        voice_clients.pop(guild_id, None)  # Safely remove the voice client
         queues.pop(guild_id, None)
         client.guilds_data[guild_id]['current_song'] = None
         await interaction.response.send_message("⏹️ Stopped the music and left the voice channel.", ephemeral=True)
@@ -451,7 +458,7 @@ async def on_interaction(interaction):
         if voice_client:
             voice_client.stop()
             await voice_client.disconnect()
-            del voice_clients[guild_id]
+            voice_clients.pop(guild_id, None)  # Safely remove the voice client
             queues.pop(guild_id, None)
             client.guilds_data[guild_id]['current_song'] = None
             await interaction.response.send_message('⏹️ Stopped the music and left the voice channel.', ephemeral=True)
