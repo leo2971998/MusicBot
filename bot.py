@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord.ui import Button, View
-from discord import Embed, Interaction, ButtonStyle
+from discord import Embed, ButtonStyle
 import os
 import asyncio
 import yt_dlp
@@ -18,7 +18,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
 intents.members = True
-client = commands.Bot(command_prefix=".", intents=intents)
+client = commands.Bot(intents=intents)
 client.guilds_data = {}  # Initialize guilds_data here
 
 # Define global variables for managing queues and voice clients
@@ -27,7 +27,7 @@ voice_clients = {}
 youtube_base_url = 'https://www.youtube.com/'
 youtube_results_url = youtube_base_url + 'results?'
 youtube_watch_url = youtube_base_url + 'watch?v='
-yt_dl_options = {"format": "bestaudio/best", "noplaylist": True}
+yt_dl_options = {"format": "bestaudio/best"}
 ytdl = yt_dlp.YoutubeDL(yt_dl_options)
 
 # FFmpeg options for audio playback
@@ -63,6 +63,7 @@ def load_guilds_data():
 # Bot ready event
 @client.event
 async def on_ready():
+    await client.tree.sync()
     print(f'{client.user} is now jamming!')
     load_guilds_data()
     for guild_id, guild_data in client.guilds_data.items():
@@ -80,22 +81,22 @@ async def on_ready():
                     print(f"Error fetching stable message for guild {guild_id}: {e}")
 
 # Setup command to create the music channel and stable message
-@client.command(name="setup")
+@client.tree.command(name="setup", description="Set up the music channel and bot UI")
 @commands.has_permissions(manage_channels=True)
-async def setup(ctx):
-    guild_id = str(ctx.guild.id)
+async def setup(interaction: discord.Interaction):
+    guild_id = str(interaction.guild.id)
     # Check if the channel exists
-    channel = discord.utils.get(ctx.guild.channels, name='leo-song-requests')
+    channel = discord.utils.get(interaction.guild.channels, name='leo-song-requests')
     if not channel:
         # Create the channel
         overwrites = {
-            ctx.guild.default_role: discord.PermissionOverwrite(
+            interaction.guild.default_role: discord.PermissionOverwrite(
                 view_channel=True,
                 send_messages=True,
                 read_message_history=True
             )
         }
-        channel = await ctx.guild.create_text_channel('leo-song-requests', overwrites=overwrites)
+        channel = await interaction.guild.create_text_channel('leo-song-requests', overwrites=overwrites)
     # Send the stable message
     stable_message = await channel.send('Setting up the music bot UI...')
     # Store the stable message and channel ID
@@ -106,7 +107,7 @@ async def setup(ctx):
     }
     save_guilds_data()
     client.guilds_data[guild_id]['stable_message'] = stable_message
-    await ctx.send('Music commands channel setup complete.')
+    await interaction.response.send_message('Music commands channel setup complete.', ephemeral=True)
     # Initialize the stable message content
     await update_stable_message(guild_id)
     # Clear other messages
@@ -162,6 +163,7 @@ async def update_stable_message(guild_id):
     view.add_item(Button(label='▶️ Play', style=ButtonStyle.primary, custom_id='resume'))
     view.add_item(Button(label='⏭️ Skip', style=ButtonStyle.primary, custom_id='skip'))
     view.add_item(Button(label='⏹️ Stop', style=ButtonStyle.primary, custom_id='stop'))
+    view.add_item(Button(label='🗑️ Clear Queue', style=ButtonStyle.danger, custom_id='clear_queue'))
 
     # Remove Buttons for Queue
     total_components = len(view.children)
@@ -237,17 +239,20 @@ async def play_song(guild_id, song_info):
     await update_stable_message(guild_id)
     save_guilds_data()
 
-# Play command to play a song or add to the queue
-@client.command(name="play")
-async def play(ctx, *, link):
-    guild_id = str(ctx.guild.id)
+# Slash command to play a song or add to the queue
+@client.tree.command(name="play", description="Play a song or add it to the queue")
+@discord.app_commands.describe(link="The URL or name of the song to play")
+async def play(interaction: discord.Interaction, link: str):
+    await interaction.response.defer()
+    guild_id = str(interaction.guild.id)
     # Connect to the voice channel if not already connected
-    if guild_id not in voice_clients or not voice_clients[guild_id].is_connected():
-        if ctx.author.voice and ctx.author.voice.channel:
-            voice_client = await ctx.author.voice.channel.connect()
+    voice_client = voice_clients.get(guild_id)
+    if not voice_client or not voice_client.is_connected():
+        if interaction.user.voice and interaction.user.voice.channel:
+            voice_client = await interaction.user.voice.channel.connect()
             voice_clients[guild_id] = voice_client
         else:
-            await ctx.send("You are not connected to a voice channel.")
+            await interaction.followup.send("You are not connected to a voice channel.")
             return
     else:
         voice_client = voice_clients[guild_id]
@@ -255,37 +260,43 @@ async def play(ctx, *, link):
     # Search and retrieve YouTube link if not already a direct link
     if 'youtube.com/watch?v=' not in link and 'youtu.be/' not in link:
         query_string = urllib.parse.urlencode({'search_query': link})
-        content = urllib.request.urlopen(youtube_results_url + query_string)
-        search_results = re.findall(r'/watch\?v=(.{11})', content.read().decode())
+        html_content = urllib.request.urlopen(youtube_results_url + query_string)
+        search_results = re.findall(r'/watch\?v=(.{11})', html_content.read().decode())
         if not search_results:
-            await ctx.send("No results found for your query.")
+            await interaction.followup.send("No results found for your query.")
             return
         link = youtube_watch_url + search_results[0]
 
     # Extract audio and play
     loop = asyncio.get_event_loop()
     data = await loop.run_in_executor(None, lambda: ytdl.extract_info(link, download=False))
-    song_info = data  # Store the entire data for later use
 
-    # Ensure the song is not a playlist
+    # Handle playlist
     if 'entries' in data:
-        await ctx.send("Playlists are not supported.")
-        return
-
-    # Initialize guild data if not present
-    if guild_id not in client.guilds_data:
-        client.guilds_data[guild_id] = {}
-
-    # Play or queue the song
-    if not voice_client.is_playing():
-        client.guilds_data[guild_id]['current_song'] = song_info
-        await play_song(guild_id, song_info)
+        playlist_entries = data['entries']
+        for entry in playlist_entries:
+            song_info = entry
+            # Add to queue
+            if guild_id not in queues:
+                queues[guild_id] = []
+            queues[guild_id].append(song_info)
+        await interaction.followup.send(f"Added playlist **{data.get('title', 'Unknown playlist')}** with {len(playlist_entries)} songs to the queue.")
     else:
-        if guild_id not in queues:
-            queues[guild_id] = []
-        queues[guild_id].append(song_info)
-        await ctx.send(f"Added to queue: {data.get('title', 'Unknown title')}")
-        await update_stable_message(guild_id)
+        song_info = data  # Store the entire data for later use
+
+        # Initialize guild data if not present
+        if guild_id not in client.guilds_data:
+            client.guilds_data[guild_id] = {}
+
+        # Play or queue the song
+        if not voice_client.is_playing():
+            client.guilds_data[guild_id]['current_song'] = song_info
+            await play_song(guild_id, song_info)
+        else:
+            if guild_id not in queues:
+                queues[guild_id] = []
+            queues[guild_id].append(song_info)
+            await interaction.followup.send(f"Added to queue: {data.get('title', 'Unknown title')}")
 
     # Clear messages except the stable message
     guild_data = client.guilds_data.get(guild_id)
@@ -295,6 +306,8 @@ async def play(ctx, *, link):
         if stable_message_id and channel_id:
             channel = client.get_channel(int(channel_id))
             await clear_channel_messages(channel, int(stable_message_id))
+
+    await update_stable_message(guild_id)
 
 # Handle button interactions
 @client.event
@@ -321,7 +334,7 @@ async def on_interaction(interaction):
         if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
             voice_client.stop()
             await interaction.response.send_message('Skipped the song.', ephemeral=True)
-            await play_next(guild_id)
+            # Do not clear the queue; play_next will handle moving to the next song
         else:
             await interaction.response.send_message('Nothing is playing.', ephemeral=True)
     elif custom_id == 'stop':
@@ -334,6 +347,12 @@ async def on_interaction(interaction):
             await interaction.response.send_message('Stopped the music and left the voice channel.', ephemeral=True)
         else:
             await interaction.response.send_message('Not connected to a voice channel.', ephemeral=True)
+    elif custom_id == 'clear_queue':
+        if guild_id in queues:
+            queues[guild_id].clear()
+            await interaction.response.send_message('Cleared the queue.', ephemeral=True)
+        else:
+            await interaction.response.send_message('The queue is already empty.', ephemeral=True)
     elif custom_id.startswith('remove_'):
         index = int(custom_id.split('_')[1])
         queue = queues.get(guild_id)
@@ -344,87 +363,6 @@ async def on_interaction(interaction):
             await interaction.response.send_message('Invalid song index.', ephemeral=True)
     else:
         await interaction.response.send_message('Unknown interaction.', ephemeral=True)
-    await update_stable_message(guild_id)
-
-# Clear the song queue
-@client.command(name="clear_queue")
-async def clear_queue(ctx):
-    guild_id = str(ctx.guild.id)
-    if guild_id in queues:
-        queues[guild_id].clear()
-        await ctx.send("Queue cleared!")
-    else:
-        await ctx.send("There is no queue to clear.")
-    await update_stable_message(guild_id)
-
-# Pause the current song
-@client.command(name="pause")
-async def pause(ctx):
-    guild_id = str(ctx.guild.id)
-    voice_client = voice_clients.get(guild_id)
-    if voice_client and voice_client.is_playing():
-        voice_client.pause()
-        await ctx.send("Paused the music.")
-        await update_stable_message(guild_id)
-    else:
-        await ctx.send("Nothing is playing.")
-
-# Resume the current song
-@client.command(name="resume")
-async def resume(ctx):
-    guild_id = str(ctx.guild.id)
-    voice_client = voice_clients.get(guild_id)
-    if voice_client and voice_client.is_paused():
-        voice_client.resume()
-        await ctx.send("Resumed the music.")
-        await update_stable_message(guild_id)
-    else:
-        await ctx.send("Nothing is paused.")
-
-# Stop the music and disconnect from the voice channel
-@client.command(name="stop")
-async def stop(ctx):
-    guild_id = str(ctx.guild.id)
-    voice_client = voice_clients.get(guild_id)
-    if voice_client:
-        voice_client.stop()
-        await voice_client.disconnect()
-        del voice_clients[guild_id]
-        queues.pop(guild_id, None)
-        client.guilds_data[guild_id]['current_song'] = None
-        await ctx.send("Stopped the music and left the voice channel.")
-        await update_stable_message(guild_id)
-    else:
-        await ctx.send("Not connected to a voice channel.")
-
-# Add a song to the queue
-@client.command(name="queue")
-async def queue_command(ctx, *, link):
-    guild_id = str(ctx.guild.id)
-    # Search and retrieve YouTube link if not already a direct link
-    if 'youtube.com/watch?v=' not in link and 'youtu.be/' not in link:
-        query_string = urllib.parse.urlencode({'search_query': link})
-        content = urllib.request.urlopen(youtube_results_url + query_string)
-        search_results = re.findall(r'/watch\?v=(.{11})', content.read().decode())
-        if not search_results:
-            await ctx.send("No results found for your query.")
-            return
-        link = youtube_watch_url + search_results[0]
-
-    # Extract audio info
-    loop = asyncio.get_event_loop()
-    data = await loop.run_in_executor(None, lambda: ytdl.extract_info(link, download=False))
-    song_info = data  # Store the entire data for later use
-
-    # Ensure the song is not a playlist
-    if 'entries' in data:
-        await ctx.send("Playlists are not supported.")
-        return
-
-    if guild_id not in queues:
-        queues[guild_id] = []
-    queues[guild_id].append(song_info)
-    await ctx.send(f"Added to queue: {song_info.get('title', 'Unknown title')}")
     await update_stable_message(guild_id)
 
 # Event handler for message deletion and processing song requests
@@ -441,9 +379,25 @@ async def on_message(message):
             # Delete the message
             await message.delete()
             # Treat the message content as a song request
-            ctx = await client.get_context(message)
-            song_request = message.content
-            await play(ctx, link=song_request)
+            # Simulate an interaction for the slash command
+            class FakeInteraction:
+                def __init__(self, user, guild, channel):
+                    self.user = user
+                    self.guild = guild
+                    self.channel = channel
+                    self.response = self
+
+                async def defer(self):
+                    pass
+
+                async def send_message(self, content):
+                    await self.channel.send(content)
+
+                async def followup(self, content):
+                    await self.channel.send(content)
+
+            interaction = FakeInteraction(message.author, message.guild, message.channel)
+            await play(interaction, link=message.content)
         else:
             # Process commands in other channels as usual
             await client.process_commands(message)
