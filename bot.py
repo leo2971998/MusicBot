@@ -258,7 +258,7 @@ async def play(interaction: discord.Interaction, link: str):
         voice_client = voice_clients[guild_id]
 
     # Search and retrieve YouTube link if not already a direct link
-    if 'youtube.com/watch?v=' not in link and 'youtu.be/' not in link:
+    if 'youtube.com/watch?v=' not in link and 'youtu.be/' not in link and 'youtube.com/playlist?' not in link:
         query_string = urllib.parse.urlencode({'search_query': link})
         html_content = urllib.request.urlopen(youtube_results_url + query_string)
         search_results = re.findall(r'/watch\?v=(.{11})', html_content.read().decode())
@@ -309,6 +309,57 @@ async def play(interaction: discord.Interaction, link: str):
 
     await update_stable_message(guild_id)
 
+# Pause command
+@client.tree.command(name="pause", description="Pause the currently playing song")
+async def pause(interaction: discord.Interaction):
+    guild_id = str(interaction.guild.id)
+    voice_client = voice_clients.get(guild_id)
+    if voice_client and voice_client.is_playing():
+        voice_client.pause()
+        await interaction.response.send_message("Paused the music.", ephemeral=True)
+        await update_stable_message(guild_id)
+    else:
+        await interaction.response.send_message("Nothing is playing.", ephemeral=True)
+
+# Resume command
+@client.tree.command(name="resume", description="Resume the paused song")
+async def resume(interaction: discord.Interaction):
+    guild_id = str(interaction.guild.id)
+    voice_client = voice_clients.get(guild_id)
+    if voice_client and voice_client.is_paused():
+        voice_client.resume()
+        await interaction.response.send_message("Resumed the music.", ephemeral=True)
+        await update_stable_message(guild_id)
+    else:
+        await interaction.response.send_message("Nothing is paused.", ephemeral=True)
+
+# Stop command
+@client.tree.command(name="stop", description="Stop the music and leave the voice channel")
+async def stop(interaction: discord.Interaction):
+    guild_id = str(interaction.guild.id)
+    voice_client = voice_clients.get(guild_id)
+    if voice_client:
+        voice_client.stop()
+        await voice_client.disconnect()
+        del voice_clients[guild_id]
+        queues.pop(guild_id, None)
+        client.guilds_data[guild_id]['current_song'] = None
+        await interaction.response.send_message("Stopped the music and left the voice channel.", ephemeral=True)
+        await update_stable_message(guild_id)
+    else:
+        await interaction.response.send_message("Not connected to a voice channel.", ephemeral=True)
+
+# Clear Queue command
+@client.tree.command(name="clear_queue", description="Clear the song queue")
+async def clear_queue(interaction: discord.Interaction):
+    guild_id = str(interaction.guild.id)
+    if guild_id in queues:
+        queues[guild_id].clear()
+        await interaction.response.send_message("Queue cleared!", ephemeral=True)
+    else:
+        await interaction.response.send_message("There is no queue to clear.", ephemeral=True)
+    await update_stable_message(guild_id)
+
 # Handle button interactions
 @client.event
 async def on_interaction(interaction):
@@ -334,7 +385,7 @@ async def on_interaction(interaction):
         if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
             voice_client.stop()
             await interaction.response.send_message('Skipped the song.', ephemeral=True)
-            # Do not clear the queue; play_next will handle moving to the next song
+            # No need to call play_next here; it will be called automatically
         else:
             await interaction.response.send_message('Nothing is playing.', ephemeral=True)
     elif custom_id == 'stop':
@@ -363,7 +414,17 @@ async def on_interaction(interaction):
             await interaction.response.send_message('Invalid song index.', ephemeral=True)
     else:
         await interaction.response.send_message('Unknown interaction.', ephemeral=True)
+
     await update_stable_message(guild_id)
+
+    # Clear messages in the channel after interaction
+    guild_data = client.guilds_data.get(guild_id)
+    if guild_data:
+        stable_message_id = guild_data.get('stable_message_id')
+        channel_id = guild_data.get('channel_id')
+        if stable_message_id and channel_id:
+            channel = client.get_channel(int(channel_id))
+            await clear_channel_messages(channel, int(stable_message_id))
 
 # Event handler for message deletion and processing song requests
 @client.event
