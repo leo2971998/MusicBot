@@ -8,6 +8,8 @@ import yt_dlp
 from dotenv import load_dotenv
 import urllib.parse, urllib.request, re
 import json
+import time
+import datetime
 
 # Load the environment variables
 load_dotenv()
@@ -153,6 +155,13 @@ class MusicControlView(View):
         voice_client = voice_clients.get(guild_id)
         if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
             voice_client.stop()
+
+            # Cancel the progress updater task
+            progress_task = client.guilds_data[guild_id].get('progress_task')
+            if progress_task:
+                progress_task.cancel()
+                client.guilds_data[guild_id]['progress_task'] = None
+
             await interaction.response.send_message('⏭️ Skipped the song.', ephemeral=True)
             # No need to call play_next here; it will be called automatically by after_playing
         else:
@@ -169,6 +178,13 @@ class MusicControlView(View):
             voice_clients.pop(guild_id, None)  # Safely remove the voice client
             queues.pop(guild_id, None)
             client.guilds_data[guild_id]['current_song'] = None
+
+            # Cancel the progress updater task
+            progress_task = client.guilds_data[guild_id].get('progress_task')
+            if progress_task:
+                progress_task.cancel()
+                client.guilds_data[guild_id]['progress_task'] = None
+
             await interaction.response.send_message('⏹️ Stopped the music and left the voice channel.', ephemeral=True)
         else:
             await interaction.response.send_message('❌ Not connected to a voice channel.', ephemeral=True)
@@ -208,6 +224,14 @@ class MusicControlView(View):
             await update_stable_message(guild_id)
         return remove_song
 
+# Create a function to generate a progress bar
+def create_progress_bar(elapsed, duration, bar_length=20):
+    if duration == 0:
+        return ''
+    filled_length = int(bar_length * elapsed // duration)
+    bar = '█' * filled_length + '░' * (bar_length - filled_length)
+    return f"`{bar}`"
+
 # Update the stable message with current song and queue
 async def update_stable_message(guild_id):
     guild_data = client.guilds_data.get(str(guild_id))
@@ -222,12 +246,27 @@ async def update_stable_message(guild_id):
     # Now Playing Embed
     if voice_client and voice_client.is_playing():
         current_song = guild_data.get('current_song')
+        start_time = guild_data.get('song_start_time')
+        duration = guild_data.get('song_duration')
+
+        elapsed = time.time() - start_time
+        remaining = max(0, duration - elapsed)
+
+        elapsed_str = str(datetime.timedelta(seconds=int(elapsed)))
+        duration_str = str(datetime.timedelta(seconds=int(duration)))
+
+        # Optional: Create a progress bar
+        progress_bar = create_progress_bar(elapsed, duration)
+
         now_playing_embed = Embed(
             title='🎶 Now Playing',
             description=f"**[{current_song['title']}]({current_song['webpage_url']})**",
             color=0x1db954
         )
         now_playing_embed.set_thumbnail(url=current_song.get('thumbnail'))
+
+        # Add progress information
+        now_playing_embed.add_field(name='Progress', value=f"`{elapsed_str} / {duration_str}`\n{progress_bar}", inline=False)
         now_playing_embed.set_footer(text='Use the buttons below to control playback.')
     else:
         now_playing_embed = Embed(
@@ -270,6 +309,12 @@ async def clear_channel_messages(channel, stable_message_id):
 # Play the next song in the queue
 async def play_next(guild_id):
     guild_id = str(guild_id)
+    # Cancel the progress updater task
+    progress_task = client.guilds_data[guild_id].get('progress_task')
+    if progress_task:
+        progress_task.cancel()
+        client.guilds_data[guild_id]['progress_task'] = None
+
     if queues.get(guild_id):
         song_info = queues[guild_id].pop(0)
         client.guilds_data[guild_id]['current_song'] = song_info
@@ -316,6 +361,13 @@ async def play_song(guild_id, song_info):
         channel = client.get_channel(int(channel_id))
         await channel.send(f"🎶 Now playing: **{song_info.get('title', 'Unknown title')}**")
         client.guilds_data[guild_id]['current_song'] = song_info
+
+        # Record the start time and duration
+        client.guilds_data[guild_id]['song_start_time'] = time.time()
+        client.guilds_data[guild_id]['song_duration'] = song_info.get('duration', 0)
+
+        # Start the progress updater task
+        client.guilds_data[guild_id]['progress_task'] = client.loop.create_task(update_progress(guild_id))
     else:
         # Add to queue
         if guild_id not in queues:
@@ -326,6 +378,23 @@ async def play_song(guild_id, song_info):
         await channel.send(f"➕ Added to queue: **{song_info.get('title', 'Unknown title')}**")
     await update_stable_message(guild_id)
     save_guilds_data()
+
+# Function to update progress periodically
+async def update_progress(guild_id):
+    guild_id = str(guild_id)
+    try:
+        while True:
+            await asyncio.sleep(15)  # Update every 15 seconds
+            voice_client = voice_clients.get(guild_id)
+            if not voice_client or not voice_client.is_playing():
+                break  # Stop updating if not playing
+
+            await update_stable_message(guild_id)
+    except asyncio.CancelledError:
+        # Task was cancelled, exit gracefully
+        pass
+    except Exception as e:
+        print(f"Error in update_progress for guild {guild_id}: {e}")
 
 # Helper function to process play requests
 async def process_play_request(user, guild, channel, link, interaction=None):
@@ -345,6 +414,7 @@ async def process_play_request(user, guild, channel, link, interaction=None):
             return
     else:
         voice_client = voice_clients[guild_id]
+
     # Adjusted playlist detection
     if 'list=' not in link and 'watch?v=' not in link and 'youtu.be/' not in link:
         # Treat as search query
@@ -400,7 +470,7 @@ async def process_play_request(user, guild, channel, link, interaction=None):
         else:
             await channel.send(msg)
 
-        # **Check if the bot is not playing and start playing the first song**
+        # Start playing if not already playing
         if not voice_client.is_playing() and not voice_client.is_paused():
             await play_next(guild_id)
 
@@ -484,6 +554,13 @@ async def stop_command(interaction: discord.Interaction):
         voice_clients.pop(guild_id, None)  # Safely remove the voice client
         queues.pop(guild_id, None)
         client.guilds_data[guild_id]['current_song'] = None
+
+        # Cancel the progress updater task
+        progress_task = client.guilds_data[guild_id].get('progress_task')
+        if progress_task:
+            progress_task.cancel()
+            client.guilds_data[guild_id]['progress_task'] = None
+
         await interaction.response.send_message("⏹️ Stopped the music and left the voice channel.", ephemeral=True)
         await update_stable_message(guild_id)
     else:
