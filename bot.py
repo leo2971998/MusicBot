@@ -9,7 +9,114 @@ from dotenv import load_dotenv
 import urllib.parse, urllib.request, re
 import json
 
-# ... [Other imports and initializations remain unchanged]
+# Load the environment variables
+load_dotenv()
+TOKEN = os.getenv("discord_token") or "YOUR_DISCORD_BOT_TOKEN"
+
+# Set up bot intents and command prefix
+intents = discord.Intents.default()
+intents.message_content = True
+intents.guilds = True
+intents.members = True
+client = commands.Bot(command_prefix=".", intents=intents)
+client.guilds_data = {}  # Initialize guilds_data here
+
+# Define global variables for managing queues and voice clients
+queues = {}
+voice_clients = {}
+youtube_base_url = 'https://www.youtube.com/'
+youtube_results_url = youtube_base_url + 'results?'
+youtube_watch_url = youtube_base_url + 'watch?v='
+
+# Adjusted yt_dl_options to handle playlists correctly
+yt_dl_options = {
+    "format": "bestaudio/best",
+    "noplaylist": False  # Enable playlist extraction
+}
+ytdl = yt_dlp.YoutubeDL(yt_dl_options)
+
+# FFmpeg options for audio playback
+ffmpeg_options = {
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'options': '-vn -filter:a "volume=0.25"'
+}
+
+# Data persistence
+DATA_FILE = 'guilds_data.json'
+
+def save_guilds_data():
+    serializable_data = {}
+    for guild_id, guild_data in client.guilds_data.items():
+        # Create a copy excluding non-serializable items
+        data_to_save = guild_data.copy()
+        data_to_save.pop('stable_message', None)
+        serializable_data[guild_id] = data_to_save
+    with open(DATA_FILE, 'w') as f:
+        json.dump(serializable_data, f)
+
+def load_guilds_data():
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, 'r') as f:
+            try:
+                client.guilds_data = json.load(f)
+            except json.JSONDecodeError:
+                print("Invalid JSON in guilds_data.json. Initializing with empty data.")
+                client.guilds_data = {}
+    else:
+        client.guilds_data = {}
+
+# Bot ready event
+@client.event
+async def on_ready():
+    await client.tree.sync()
+    print(f'{client.user} is now jamming!')
+    load_guilds_data()
+    for guild_id, guild_data in client.guilds_data.items():
+        channel_id = guild_data.get('channel_id')
+        stable_message_id = guild_data.get('stable_message_id')
+        guild = client.get_guild(int(guild_id))
+        if guild:
+            channel = guild.get_channel(int(channel_id))
+            if channel:
+                try:
+                    stable_message = await channel.fetch_message(int(stable_message_id))
+                    client.guilds_data[guild_id]['stable_message'] = stable_message
+                    await update_stable_message(int(guild_id))
+                except Exception as e:
+                    print(f"Error fetching stable message for guild {guild_id}: {e}")
+
+# Setup command to create the music channel and stable message
+@client.tree.command(name="setup", description="Set up the music channel and bot UI")
+@commands.has_permissions(manage_channels=True)
+async def setup(interaction: discord.Interaction):
+    guild_id = str(interaction.guild.id)
+    # Check if the channel exists
+    channel = discord.utils.get(interaction.guild.channels, name='leo-song-requests')
+    if not channel:
+        # Create the channel
+        overwrites = {
+            interaction.guild.default_role: discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True
+            )
+        }
+        channel = await interaction.guild.create_text_channel('leo-song-requests', overwrites=overwrites)
+    # Send the stable message
+    stable_message = await channel.send('🎶 **Music Bot UI Initialized** 🎶')
+    # Store the stable message and channel ID
+    client.guilds_data[guild_id] = {
+        'channel_id': channel.id,
+        'stable_message_id': stable_message.id,
+        'current_song': None
+    }
+    save_guilds_data()
+    client.guilds_data[guild_id]['stable_message'] = stable_message
+    await interaction.response.send_message('Music commands channel setup complete.', ephemeral=True)
+    # Initialize the stable message content
+    await update_stable_message(guild_id)
+    # Clear other messages
+    await clear_channel_messages(channel, stable_message.id)
 
 # Define the MusicControlView
 class MusicControlView(View):
@@ -101,7 +208,7 @@ class MusicControlView(View):
             await update_stable_message(guild_id)
         return remove_song
 
-# Update the stable message function
+# Update the stable message with current song and queue
 async def update_stable_message(guild_id):
     guild_data = client.guilds_data.get(str(guild_id))
     if not guild_data:
@@ -388,75 +495,6 @@ async def clear_queue_command(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("❌ There is no queue to clear.", ephemeral=True)
     await update_stable_message(guild_id)
-
-# Handle button interactions
-@client.event
-async def on_interaction(interaction):
-    if not interaction.type == discord.InteractionType.component:
-        return
-    guild_id = str(interaction.guild.id)
-    custom_id = interaction.data['custom_id']
-    voice_client = voice_clients.get(guild_id)
-
-    if custom_id == 'pause':
-        if voice_client and voice_client.is_playing():
-            voice_client.pause()
-            await interaction.response.send_message('⏸️ Paused the music.', ephemeral=True)
-        else:
-            await interaction.response.send_message('❌ Nothing is playing.', ephemeral=True)
-    elif custom_id == 'resume':
-        if voice_client and voice_client.is_paused():
-            voice_client.resume()
-            await interaction.response.send_message('▶️ Resumed the music.', ephemeral=True)
-        else:
-            await interaction.response.send_message('❌ Nothing is paused.', ephemeral=True)
-    elif custom_id == 'skip':
-        if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
-            voice_client.stop()
-            await interaction.response.send_message('⏭️ Skipped the song.', ephemeral=True)
-            # No need to call play_next here; it will be called automatically by after_playing
-        else:
-            await interaction.response.send_message('❌ Nothing is playing.', ephemeral=True)
-    elif custom_id == 'stop':
-        if voice_client:
-            voice_client.stop()
-            await voice_client.disconnect()
-            voice_clients.pop(guild_id, None)  # Safely remove the voice client
-            queues.pop(guild_id, None)
-            client.guilds_data[guild_id]['current_song'] = None
-            await interaction.response.send_message('⏹️ Stopped the music and left the voice channel.', ephemeral=True)
-        else:
-            await interaction.response.send_message('❌ Not connected to a voice channel.', ephemeral=True)
-    elif custom_id == 'clear_queue':
-        if guild_id in queues:
-            queues[guild_id].clear()
-            await interaction.response.send_message('🗑️ Cleared the queue.', ephemeral=True)
-        else:
-            await interaction.response.send_message('❌ The queue is already empty.', ephemeral=True)
-    elif custom_id.startswith('remove_'):
-        try:
-            index = int(custom_id.split('_')[1])
-            queue = queues.get(guild_id)
-            if queue and 0 <= index < len(queue):
-                removed_song = queue.pop(index)
-                await interaction.response.send_message(f'❌ Removed **{removed_song["title"]}** from the queue.', ephemeral=True)
-            else:
-                await interaction.response.send_message('❌ Invalid song index.', ephemeral=True)
-        except (IndexError, ValueError):
-            await interaction.response.send_message('❌ Invalid remove command.', ephemeral=True)
-    else:
-        await interaction.response.send_message('❌ Unknown interaction.', ephemeral=True)
-
-    await update_stable_message(guild_id)
-
-    # Clear messages in the channel after interaction
-    guild_data = client.guilds_data.get(guild_id)
-    if guild_data:
-        stable_message_id = guild_data.get('stable_message_id')
-        channel_id = guild_data.get('channel_id')
-        if stable_message_id and channel_id:
-            channel = client.get_channel(int(channel_id))
-            await clear_channel_messages(channel, int(stable_message_id))
 
 # Event handler for message deletion and processing song requests
 @client.event
