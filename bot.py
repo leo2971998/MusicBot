@@ -31,9 +31,7 @@ youtube_watch_url = youtube_base_url + 'watch?v='
 # Adjusted yt_dl_options to handle playlists correctly
 yt_dl_options = {
     "format": "bestaudio/best",
-    "noplaylist": False,  # Enable playlist extraction
-    "extract_flat": False,
-    "lazy_playlist": False
+    "noplaylist": False  # Enable playlist extraction
 }
 ytdl = yt_dlp.YoutubeDL(yt_dl_options)
 
@@ -220,7 +218,16 @@ async def play_next(guild_id):
 async def play_song(guild_id, song_info):
     guild_id = str(guild_id)
     voice_client = voice_clients[guild_id]
-    song_url = song_info['url']
+    song_url = song_info.get('url')
+    if not song_url and 'formats' in song_info:
+        # Get the best audio format
+        for fmt in song_info['formats']:
+            if fmt.get('acodec') != 'none':
+                song_url = fmt['url']
+                break
+    if not song_url:
+        print(f"No valid audio URL found for {song_info.get('title')}")
+        return
     player = discord.FFmpegOpusAudio(song_url, **ffmpeg_options)
     if not voice_client.is_playing():
         def after_playing(error):
@@ -313,18 +320,12 @@ async def process_play_request(user, guild, channel, link, interaction=None):
         for entry in playlist_entries:
             if entry is None:
                 continue  # Skip if entry is None
-            # Re-extract the full metadata for each entry
-            try:
-                song_url = f"https://www.youtube.com/watch?v={entry['id']}"
-                song_info = await loop.run_in_executor(None, lambda: ytdl.extract_info(song_url, download=False))
-                # Add to queue
-                if guild_id not in queues:
-                    queues[guild_id] = []
-                queues[guild_id].append(song_info)
-                added_songs.append(song_info['title'])
-            except Exception as e:
-                print(f"Error extracting song info for an entry: {e}")
-                continue
+            song_info = entry  # Use the entry directly
+            # Add to queue
+            if guild_id not in queues:
+                queues[guild_id] = []
+            queues[guild_id].append(song_info)
+            added_songs.append(song_info['title'])
         msg = f"🎶 Added playlist **{data.get('title', 'Unknown playlist')}** with {len(added_songs)} songs to the queue."
         if interaction:
             await interaction.followup.send(msg)
