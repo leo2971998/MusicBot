@@ -345,7 +345,6 @@ async def process_play_request(user, guild, channel, link, interaction=None):
             return
     else:
         voice_client = voice_clients[guild_id]
-
     # Adjusted playlist detection
     if 'list=' not in link and 'watch?v=' not in link and 'youtu.be/' not in link:
         # Treat as search query
@@ -400,6 +399,11 @@ async def process_play_request(user, guild, channel, link, interaction=None):
             await interaction.followup.send(msg)
         else:
             await channel.send(msg)
+
+        # **Check if the bot is not playing and start playing the first song**
+        if not voice_client.is_playing() and not voice_client.is_paused():
+            await play_next(guild_id)
+
     else:
         # Single video
         song_info = data  # Store the entire data for later use
