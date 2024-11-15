@@ -224,24 +224,40 @@ class MusicControlView(View):
             await update_stable_message(guild_id)
         return remove_song
 
+# Create a function to format time
+def format_time(seconds):
+    minutes = int(seconds) // 60
+    seconds = int(seconds) % 60
+    return f"{minutes:02d}:{seconds:02d}"
+
 # Create a function to generate a progress bar
 def create_progress_bar(elapsed, duration, bar_length=20):
     if duration == 0:
         return ''
-    filled_length = int(bar_length * elapsed // duration)
-    bar = '█' * filled_length + '░' * (bar_length - filled_length)
-    return f"`{bar}`"
+    position = int(bar_length * elapsed / duration)
+    bar = ''
+    for i in range(bar_length + 1):
+        if i == 0:
+            bar += '●'  # Start dot
+        elif i == bar_length:
+            bar += '●'  # End dot
+        elif i == position:
+            bar += '🔘'  # Moving dot
+        else:
+            bar += '─'  # Bar
+    return bar
 
 # Update the stable message with current song and queue
 async def update_stable_message(guild_id):
-    guild_data = client.guilds_data.get(str(guild_id))
+    guild_id = str(guild_id)
+    guild_data = client.guilds_data.get(guild_id)
     if not guild_data:
         return
     stable_message = guild_data.get('stable_message')
     if not stable_message:
         return
-    queue = queues.get(str(guild_id), [])
-    voice_client = voice_clients.get(str(guild_id))
+    queue = queues.get(guild_id, [])
+    voice_client = voice_clients.get(guild_id)
 
     # Now Playing Embed
     if voice_client and voice_client.is_playing():
@@ -249,13 +265,13 @@ async def update_stable_message(guild_id):
         start_time = guild_data.get('song_start_time')
         duration = guild_data.get('song_duration')
 
-        elapsed = time.time() - start_time
+        elapsed = time.monotonic() - start_time
         remaining = max(0, duration - elapsed)
 
-        elapsed_str = str(datetime.timedelta(seconds=int(elapsed)))
-        duration_str = str(datetime.timedelta(seconds=int(duration)))
+        elapsed_str = format_time(elapsed)
+        duration_str = format_time(duration)
 
-        # Optional: Create a progress bar
+        # Create a progress bar
         progress_bar = create_progress_bar(elapsed, duration)
 
         now_playing_embed = Embed(
@@ -362,8 +378,8 @@ async def play_song(guild_id, song_info):
         await channel.send(f"🎶 Now playing: **{song_info.get('title', 'Unknown title')}**")
         client.guilds_data[guild_id]['current_song'] = song_info
 
-        # Record the start time and duration
-        client.guilds_data[guild_id]['song_start_time'] = time.time()
+        # Record the start time and duration using time.monotonic()
+        client.guilds_data[guild_id]['song_start_time'] = time.monotonic()
         client.guilds_data[guild_id]['song_duration'] = song_info.get('duration', 0)
 
         # Start the progress updater task
@@ -384,7 +400,7 @@ async def update_progress(guild_id):
     guild_id = str(guild_id)
     try:
         while True:
-            await asyncio.sleep(15)  # Update every 15 seconds
+            await asyncio.sleep(5)  # Update every 5 seconds
             voice_client = voice_clients.get(guild_id)
             if not voice_client or not voice_client.is_playing():
                 break  # Stop updating if not playing
