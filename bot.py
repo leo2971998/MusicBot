@@ -9,116 +9,99 @@ from dotenv import load_dotenv
 import urllib.parse, urllib.request, re
 import json
 
-# Load the environment variables
-load_dotenv()
-TOKEN = os.getenv("discord_token") or "YOUR_DISCORD_BOT_TOKEN"
+# ... [Other imports and initializations remain unchanged]
 
-# Set up bot intents and command prefix
-intents = discord.Intents.default()
-intents.message_content = True
-intents.guilds = True
-intents.members = True
-client = commands.Bot(command_prefix=".", intents=intents)
-client.guilds_data = {}  # Initialize guilds_data here
+# Define the MusicControlView
+class MusicControlView(View):
+    def __init__(self, queue):
+        super().__init__(timeout=None)
+        self.queue = queue
+        self.generate_remove_buttons()
 
-# Define global variables for managing queues and voice clients
-queues = {}
-voice_clients = {}
-youtube_base_url = 'https://www.youtube.com/'
-youtube_results_url = youtube_base_url + 'results?'
-youtube_watch_url = youtube_base_url + 'watch?v='
+    @discord.ui.button(label='⏸️ Pause', style=ButtonStyle.primary)
+    async def pause_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild_id = str(interaction.guild.id)
+        voice_client = voice_clients.get(guild_id)
+        if voice_client and voice_client.is_playing():
+            voice_client.pause()
+            await interaction.response.send_message('⏸️ Paused the music.', ephemeral=True)
+        else:
+            await interaction.response.send_message('❌ Nothing is playing.', ephemeral=True)
+        await update_stable_message(guild_id)
 
-# Adjusted yt_dl_options to handle playlists correctly
-yt_dl_options = {
-    "format": "bestaudio/best",
-    "noplaylist": False  # Enable playlist extraction
-}
-ytdl = yt_dlp.YoutubeDL(yt_dl_options)
+    @discord.ui.button(label='▶️ Resume', style=ButtonStyle.primary)
+    async def resume_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild_id = str(interaction.guild.id)
+        voice_client = voice_clients.get(guild_id)
+        if voice_client and voice_client.is_paused():
+            voice_client.resume()
+            await interaction.response.send_message('▶️ Resumed the music.', ephemeral=True)
+        else:
+            await interaction.response.send_message('❌ Nothing is paused.', ephemeral=True)
+        await update_stable_message(guild_id)
 
-# FFmpeg options for audio playback
-ffmpeg_options = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn -filter:a "volume=0.25"'
-}
+    @discord.ui.button(label='⏭️ Skip', style=ButtonStyle.primary)
+    async def skip_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild_id = str(interaction.guild.id)
+        voice_client = voice_clients.get(guild_id)
+        if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
+            voice_client.stop()
+            await interaction.response.send_message('⏭️ Skipped the song.', ephemeral=True)
+            # No need to call play_next here; it will be called automatically by after_playing
+        else:
+            await interaction.response.send_message('❌ Nothing is playing.', ephemeral=True)
+        await update_stable_message(guild_id)
 
-# Data persistence
-DATA_FILE = 'guilds_data.json'
+    @discord.ui.button(label='⏹️ Stop', style=ButtonStyle.primary)
+    async def stop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild_id = str(interaction.guild.id)
+        voice_client = voice_clients.get(guild_id)
+        if voice_client:
+            voice_client.stop()
+            await voice_client.disconnect()
+            voice_clients.pop(guild_id, None)  # Safely remove the voice client
+            queues.pop(guild_id, None)
+            client.guilds_data[guild_id]['current_song'] = None
+            await interaction.response.send_message('⏹️ Stopped the music and left the voice channel.', ephemeral=True)
+        else:
+            await interaction.response.send_message('❌ Not connected to a voice channel.', ephemeral=True)
+        await update_stable_message(guild_id)
 
-def save_guilds_data():
-    serializable_data = {}
-    for guild_id, guild_data in client.guilds_data.items():
-        # Create a copy excluding non-serializable items
-        data_to_save = guild_data.copy()
-        data_to_save.pop('stable_message', None)
-        serializable_data[guild_id] = data_to_save
-    with open(DATA_FILE, 'w') as f:
-        json.dump(serializable_data, f)
+    @discord.ui.button(label='🗑️ Clear Queue', style=ButtonStyle.danger)
+    async def clear_queue_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild_id = str(interaction.guild.id)
+        if guild_id in queues:
+            queues[guild_id].clear()
+            await interaction.response.send_message('🗑️ Cleared the queue.', ephemeral=True)
+        else:
+            await interaction.response.send_message('❌ The queue is already empty.', ephemeral=True)
+        await update_stable_message(guild_id)
 
-def load_guilds_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, 'r') as f:
-            try:
-                client.guilds_data = json.load(f)
-            except json.JSONDecodeError:
-                print("Invalid JSON in guilds_data.json. Initializing with empty data.")
-                client.guilds_data = {}
-    else:
-        client.guilds_data = {}
-
-# Bot ready event
-@client.event
-async def on_ready():
-    await client.tree.sync()
-    print(f'{client.user} is now jamming!')
-    load_guilds_data()
-    for guild_id, guild_data in client.guilds_data.items():
-        channel_id = guild_data.get('channel_id')
-        stable_message_id = guild_data.get('stable_message_id')
-        guild = client.get_guild(int(guild_id))
-        if guild:
-            channel = guild.get_channel(int(channel_id))
-            if channel:
-                try:
-                    stable_message = await channel.fetch_message(int(stable_message_id))
-                    client.guilds_data[guild_id]['stable_message'] = stable_message
-                    await update_stable_message(int(guild_id))
-                except Exception as e:
-                    print(f"Error fetching stable message for guild {guild_id}: {e}")
-
-# Setup command to create the music channel and stable message
-@client.tree.command(name="setup", description="Set up the music channel and bot UI")
-@commands.has_permissions(manage_channels=True)
-async def setup(interaction: discord.Interaction):
-    guild_id = str(interaction.guild.id)
-    # Check if the channel exists
-    channel = discord.utils.get(interaction.guild.channels, name='leo-song-requests')
-    if not channel:
-        # Create the channel
-        overwrites = {
-            interaction.guild.default_role: discord.PermissionOverwrite(
-                view_channel=True,
-                send_messages=True,
-                read_message_history=True
+    def generate_remove_buttons(self):
+        max_components = 25 - len(self.children)  # Adjust for existing buttons
+        for idx, song in enumerate(self.queue):
+            if len(self.children) >= max_components:
+                break  # Cannot add more components
+            button = Button(
+                label=f"❌ Remove {idx + 1}",
+                style=ButtonStyle.secondary
             )
-        }
-        channel = await interaction.guild.create_text_channel('leo-song-requests', overwrites=overwrites)
-    # Send the stable message
-    stable_message = await channel.send('🎶 **Music Bot UI Initialized** 🎶')
-    # Store the stable message and channel ID
-    client.guilds_data[guild_id] = {
-        'channel_id': channel.id,
-        'stable_message_id': stable_message.id,
-        'current_song': None
-    }
-    save_guilds_data()
-    client.guilds_data[guild_id]['stable_message'] = stable_message
-    await interaction.response.send_message('Music commands channel setup complete.', ephemeral=True)
-    # Initialize the stable message content
-    await update_stable_message(guild_id)
-    # Clear other messages
-    await clear_channel_messages(channel, stable_message.id)
+            button.callback = self.generate_remove_callback(idx)
+            self.add_item(button)
 
-# Update the stable message with current song and queue
+    def generate_remove_callback(self, index):
+        async def remove_song(interaction: discord.Interaction):
+            guild_id = str(interaction.guild.id)
+            queue = queues.get(guild_id)
+            if queue and 0 <= index < len(queue):
+                removed_song = queue.pop(index)
+                await interaction.response.send_message(f'❌ Removed **{removed_song["title"]}** from the queue.', ephemeral=True)
+            else:
+                await interaction.response.send_message('❌ Invalid song index.', ephemeral=True)
+            await update_stable_message(guild_id)
+        return remove_song
+
+# Update the stable message function
 async def update_stable_message(guild_id):
     guild_data = client.guilds_data.get(str(guild_id))
     if not guild_data:
@@ -160,29 +143,8 @@ async def update_stable_message(guild_id):
     )
     queue_embed.set_footer(text=f"Total songs in queue: {len(queue)}")
 
-    # Create a View for all buttons
-    view = View()
-
-    # Control Buttons
-    view.add_item(Button(label='⏸️ Pause', style=ButtonStyle.primary, custom_id='pause'))
-    view.add_item(Button(label='▶️ Resume', style=ButtonStyle.primary, custom_id='resume'))
-    view.add_item(Button(label='⏭️ Skip', style=ButtonStyle.primary, custom_id='skip'))
-    view.add_item(Button(label='⏹️ Stop', style=ButtonStyle.primary, custom_id='stop'))
-    view.add_item(Button(label='🗑️ Clear Queue', style=ButtonStyle.danger, custom_id='clear_queue'))
-
-    # Remove Buttons for Queue
-    total_components = len(view.children)
-    max_components = 25  # Discord allows up to 25 components
-    for idx, song in enumerate(queue):
-        if total_components >= max_components:
-            break  # Cannot add more components
-        button = Button(
-            label=f"❌ Remove {idx + 1}",
-            style=ButtonStyle.secondary,
-            custom_id=f'remove_{idx}'
-        )
-        view.add_item(button)
-        total_components += 1
+    # Create the MusicControlView
+    view = MusicControlView(queue)
 
     await stable_message.edit(content=None, embeds=[now_playing_embed, queue_embed], view=view)
     save_guilds_data()
