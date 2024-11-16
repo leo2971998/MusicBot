@@ -235,21 +235,16 @@ def format_time(seconds):
     seconds = int(seconds) % 60
     return f"{minutes:02d}:{seconds:02d}"
 
-# Create a function to generate a progress bar
-def create_progress_bar(elapsed, duration, bar_length=20):
+# Create a function to generate a progress bar with emoji blocks
+def create_progress_bar_emoji(elapsed, duration):
     if duration == 0:
         return ''
-    position = int(bar_length * elapsed / duration)
-    bar = ''
-    for i in range(bar_length + 1):
-        if i == 0:
-            bar += '●'  # Start dot
-        elif i == bar_length:
-            bar += '●'  # End dot
-        elif i == position:
-            bar += '🔘'  # Moving dot
-        else:
-            bar += '─'  # Bar
+    progress_percentage = (elapsed / duration) * 100
+    # Round to the nearest 10%
+    progress_blocks = round(progress_percentage / 10)
+    bar = '▶️ '  # Start with a play icon
+    bar += '🟩' * progress_blocks  # Filled blocks
+    bar += '🟥' * (10 - progress_blocks)  # Empty blocks
     return bar
 
 # Update the stable message with current song and queue
@@ -271,13 +266,14 @@ async def update_stable_message(guild_id):
         duration = guild_data.get('song_duration')
 
         elapsed = time.monotonic() - start_time
+        elapsed = min(elapsed, duration)  # Ensure elapsed doesn't exceed duration
         remaining = max(0, duration - elapsed)
 
         elapsed_str = format_time(elapsed)
         duration_str = format_time(duration)
 
-        # Create a progress bar
-        progress_bar = create_progress_bar(elapsed, duration)
+        # Create a progress bar with emoji blocks
+        progress_bar = create_progress_bar_emoji(elapsed, duration)
 
         now_playing_embed = Embed(
             title='🎶 Now Playing',
