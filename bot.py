@@ -29,7 +29,7 @@ youtube_base_url = 'https://www.youtube.com/'
 youtube_results_url = youtube_base_url + 'results?'
 youtube_watch_url = youtube_base_url + 'watch?v='
 
-# Adjusted yt_dl_options
+# Adjusted yt_dlp options
 yt_dl_options = {
     "format": "bestaudio/best",
     "noplaylist": False,
@@ -239,12 +239,12 @@ def format_time(seconds):
 def create_progress_bar_emoji(elapsed, duration):
     if duration == 0:
         return ''
+    total_blocks = 20  # Increase number of blocks for finer increments
     progress_percentage = (elapsed / duration) * 100
-    # Round to the nearest 10%
-    progress_blocks = round(progress_percentage / 10)
+    progress_blocks = round((progress_percentage / 100) * total_blocks)
     bar = '▶️ '  # Start with a play icon
     bar += '🟩' * progress_blocks  # Filled blocks
-    bar += '🟥' * (10 - progress_blocks)  # Empty blocks
+    bar += '🟥' * (total_blocks - progress_blocks)  # Empty blocks
     return bar
 
 # Update the stable message with current song and queue
@@ -309,7 +309,11 @@ async def update_stable_message(guild_id):
     # Create the MusicControlView
     view = MusicControlView(queue)
 
-    await stable_message.edit(content=None, embeds=[now_playing_embed, queue_embed], view=view)
+    try:
+        await stable_message.edit(content=None, embeds=[now_playing_embed, queue_embed], view=view)
+    except discord.errors.HTTPException as e:
+        print(f"Rate limit hit when updating message in guild {guild_id}: {e}")
+
     save_guilds_data()
 
 # Clear messages in the channel except the stable message
@@ -401,7 +405,7 @@ async def update_progress(guild_id):
     guild_id = str(guild_id)
     try:
         while True:
-            await asyncio.sleep(5)  # Update every 5 seconds
+            await asyncio.sleep(5)  # Update every 5 seconds to avoid rate limits
             voice_client = voice_clients.get(guild_id)
             if not voice_client or not voice_client.is_playing():
                 break  # Stop updating if not playing
@@ -593,6 +597,35 @@ async def clear_queue_command(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("❌ There is no queue to clear.", ephemeral=True)
     await update_stable_message(guild_id)
+
+# Now Playing command
+@client.tree.command(name="nowplaying", description="Show the current song and progress")
+async def nowplaying_command(interaction: discord.Interaction):
+    guild_id = str(interaction.guild.id)
+    guild_data = client.guilds_data.get(guild_id)
+    if not guild_data or not guild_data.get('current_song'):
+        await interaction.response.send_message("No song is currently playing.", ephemeral=True)
+        return
+
+    current_song = guild_data['current_song']
+    start_time = guild_data['song_start_time']
+    duration = guild_data['song_duration']
+    elapsed = time.monotonic() - start_time
+    elapsed = min(elapsed, duration)
+
+    elapsed_str = format_time(elapsed)
+    duration_str = format_time(duration)
+    progress_bar = create_progress_bar_emoji(elapsed, duration)
+
+    now_playing_embed = Embed(
+        title='🎶 Now Playing',
+        description=f"**[{current_song['title']}]({current_song['webpage_url']})**",
+        color=0x1db954
+    )
+    now_playing_embed.set_thumbnail(url=current_song.get('thumbnail'))
+    now_playing_embed.add_field(name='Progress', value=f"`{elapsed_str} / {duration_str}`\n{progress_bar}", inline=False)
+
+    await interaction.response.send_message(embed=now_playing_embed, ephemeral=True)
 
 # Event handler for message deletion and processing song requests
 @client.event
