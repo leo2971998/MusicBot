@@ -9,7 +9,6 @@ from dotenv import load_dotenv
 import urllib.parse, urllib.request, re
 import json
 import time
-import datetime
 
 # Load the environment variables
 load_dotenv()
@@ -30,17 +29,21 @@ youtube_base_url = 'https://www.youtube.com/'
 youtube_results_url = youtube_base_url + 'results?'
 youtube_watch_url = youtube_base_url + 'watch?v='
 
-# Adjusted yt_dl_options to handle playlists correctly
+# Adjusted yt_dl_options
 yt_dl_options = {
     "format": "bestaudio/best",
-    "noplaylist": False  # Enable playlist extraction
+    "noplaylist": False,
+    "quiet": True,
+    "default_search": "auto",
+    "extract_flat": False,
+    "nocheckcertificate": True,
 }
 ytdl = yt_dlp.YoutubeDL(yt_dl_options)
 
 # FFmpeg options for audio playback
 ffmpeg_options = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn -filter:a "volume=0.25"'
+    'options': '-vn'  # Removed volume filter for performance
 }
 
 # Data persistence
@@ -51,7 +54,9 @@ def save_guilds_data():
     for guild_id, guild_data in client.guilds_data.items():
         # Create a copy excluding non-serializable items
         data_to_save = guild_data.copy()
+        # Exclude non-serializable items
         data_to_save.pop('stable_message', None)
+        data_to_save.pop('progress_task', None)  # Exclude the progress_task
         serializable_data[guild_id] = data_to_save
     with open(DATA_FILE, 'w') as f:
         json.dump(serializable_data, f)
@@ -358,7 +363,7 @@ async def play_song(guild_id, song_info):
     if not song_url:
         print(f"No valid audio URL found for {song_info.get('title')}")
         return
-    player = discord.FFmpegOpusAudio(song_url, **ffmpeg_options)
+    player = discord.FFmpegPCMAudio(song_url, **ffmpeg_options)
     if not voice_client.is_playing():
         def after_playing(error):
             if error:
