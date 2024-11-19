@@ -255,6 +255,7 @@ def create_progress_bar_emoji(elapsed, duration):
     return bar
 
 # Update the stable message with current song and queue
+# Update the stable message with current song and queue
 async def update_stable_message(guild_id):
     guild_id = str(guild_id)
     guild_data = client.guilds_data.get(guild_id)
@@ -267,7 +268,7 @@ async def update_stable_message(guild_id):
     voice_client = voice_clients.get(guild_id)
 
     # Now Playing Embed
-    if voice_client and voice_client.is_playing():
+    if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
         current_song = guild_data.get('current_song')
         start_time = guild_data.get('song_start_time')
         duration = guild_data.get('song_duration')
