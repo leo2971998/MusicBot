@@ -57,6 +57,7 @@ def save_guilds_data():
         # Exclude non-serializable items
         data_to_save.pop('stable_message', None)
         data_to_save.pop('progress_task', None)  # Exclude the progress_task
+        data_to_save.pop('disconnect_task', None)  # Exclude the disconnect_task
         serializable_data[guild_id] = data_to_save
     with open(DATA_FILE, 'w') as f:
         json.dump(serializable_data, f)
@@ -189,6 +190,12 @@ class MusicControlView(View):
             if progress_task:
                 progress_task.cancel()
                 client.guilds_data[guild_id]['progress_task'] = None
+
+            # Cancel the disconnect task if it exists
+            disconnect_task = client.guilds_data[guild_id].get('disconnect_task')
+            if disconnect_task:
+                disconnect_task.cancel()
+                client.guilds_data[guild_id]['disconnect_task'] = None
 
             await interaction.response.send_message('⏹️ Stopped the music and left the voice channel.', ephemeral=True)
         else:
@@ -327,6 +334,13 @@ async def clear_channel_messages(channel, stable_message_id):
             except discord.HTTPException as e:
                 print(f"Failed to delete message {message.id}: {e}")
 
+# Function to cancel any scheduled disconnect task
+def cancel_disconnect_task(guild_id):
+    disconnect_task = client.guilds_data.get(guild_id, {}).get('disconnect_task')
+    if disconnect_task:
+        disconnect_task.cancel()
+        client.guilds_data[guild_id]['disconnect_task'] = None
+
 # Play the next song in the queue
 async def play_next(guild_id):
     guild_id = str(guild_id)
@@ -343,16 +357,22 @@ async def play_next(guild_id):
     else:
         # No more songs in the queue
         client.guilds_data[guild_id]['current_song'] = None
-        voice_client = voice_clients.get(guild_id)
-        if voice_client:
-            await voice_client.disconnect()
-            voice_clients.pop(guild_id, None)  # Safely remove the voice client
+
+        # Schedule a delayed disconnect
+        if not client.guilds_data[guild_id].get('disconnect_task'):
+            disconnect_task = client.loop.create_task(disconnect_after_delay(guild_id, delay=300))  # 5 minutes
+            client.guilds_data[guild_id]['disconnect_task'] = disconnect_task
+
         await update_stable_message(guild_id)
 
 # Function to play a song
 async def play_song(guild_id, song_info):
     guild_id = str(guild_id)
     voice_client = voice_clients[guild_id]
+
+    # Cancel any scheduled disconnect task
+    cancel_disconnect_task(guild_id)
+
     song_url = song_info.get('url')
     if not song_url and 'formats' in song_info:
         # Get the best audio format
@@ -435,6 +455,9 @@ async def process_play_request(user, guild, channel, link, interaction=None):
             return
     else:
         voice_client = voice_clients[guild_id]
+
+    # Cancel any scheduled disconnect task
+    cancel_disconnect_task(guild_id)
 
     # Adjusted playlist detection
     if 'list=' not in link and 'watch?v=' not in link and 'youtu.be/' not in link:
@@ -582,6 +605,12 @@ async def stop_command(interaction: discord.Interaction):
             progress_task.cancel()
             client.guilds_data[guild_id]['progress_task'] = None
 
+        # Cancel the disconnect task if it exists
+        disconnect_task = client.guilds_data[guild_id].get('disconnect_task')
+        if disconnect_task:
+            disconnect_task.cancel()
+            client.guilds_data[guild_id]['disconnect_task'] = None
+
         await interaction.response.send_message("⏹️ Stopped the music and left the voice channel.", ephemeral=True)
         await update_stable_message(guild_id)
     else:
@@ -652,6 +681,21 @@ async def on_message(message):
             await client.process_commands(message)
     else:
         await client.process_commands(message)
+
+# Function to handle delayed disconnect
+async def disconnect_after_delay(guild_id, delay):
+    try:
+        await asyncio.sleep(delay)
+        voice_client = voice_clients.get(guild_id)
+        if voice_client and not voice_client.is_playing():
+            await voice_client.disconnect()
+            voice_clients.pop(guild_id, None)  # Safely remove the voice client
+            # Remove the disconnect task reference
+            client.guilds_data[guild_id]['disconnect_task'] = None
+            await update_stable_message(guild_id)
+    except asyncio.CancelledError:
+        # The task was cancelled, do nothing
+        pass
 
 # Run the bot
 client.run(TOKEN)
