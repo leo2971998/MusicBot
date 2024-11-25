@@ -29,9 +29,8 @@ client.playback_modes = {}
 # Define playback modes
 PLAYBACK_MODES = {
     'NORMAL': 'normal',
-    'LOOP': 'loop',
-    'REPEAT': 'repeat',
-    'SHUFFLE': 'shuffle'
+    'REPEAT': 'repeat',  # Repeats the current song indefinitely
+    'LOOP': 'loop'       # Loops the entire queue indefinitely
 }
 
 # Define global variables for managing queues and voice clients
@@ -202,7 +201,6 @@ class MusicControlView(View):
             voice_client.stop()
             await voice_client.disconnect()
             voice_clients.pop(guild_id, None)  # Safely remove the voice client
-            queues.pop(guild_id, None)
             client.guilds_data[guild_id]['current_song'] = None
 
             # Cancel the progress updater task
@@ -230,21 +228,10 @@ class MusicControlView(View):
         guild_id = str(interaction.guild.id)
         if guild_id in queues:
             queues[guild_id].clear()
+            client.guilds_data[guild_id]['original_queue'] = []
             await interaction.response.send_message('🗑️ Cleared the queue.', ephemeral=True)
         else:
             await interaction.response.send_message('❌ The queue is already empty.', ephemeral=True)
-        await update_stable_message(guild_id)
-
-    @discord.ui.button(label='🔁 Loop', style=ButtonStyle.primary)
-    async def loop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        guild_id = str(interaction.guild.id)
-        current_mode = client.playback_modes.get(guild_id, PLAYBACK_MODES['NORMAL'])
-        if current_mode == PLAYBACK_MODES['LOOP']:
-            client.playback_modes[guild_id] = PLAYBACK_MODES['NORMAL']
-            await interaction.response.send_message('🔁 Loop mode disabled.', ephemeral=True)
-        else:
-            client.playback_modes[guild_id] = PLAYBACK_MODES['LOOP']
-            await interaction.response.send_message('🔁 Loop mode enabled.', ephemeral=True)
         await update_stable_message(guild_id)
 
     @discord.ui.button(label='🔂 Repeat', style=ButtonStyle.primary)
@@ -259,12 +246,25 @@ class MusicControlView(View):
             await interaction.response.send_message('🔂 Repeat mode enabled.', ephemeral=True)
         await update_stable_message(guild_id)
 
+    @discord.ui.button(label='🔁 Loop', style=ButtonStyle.primary)
+    async def loop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild_id = str(interaction.guild.id)
+        current_mode = client.playback_modes.get(guild_id, PLAYBACK_MODES['NORMAL'])
+        if current_mode == PLAYBACK_MODES['LOOP']:
+            client.playback_modes[guild_id] = PLAYBACK_MODES['NORMAL']
+            await interaction.response.send_message('🔁 Loop mode disabled.', ephemeral=True)
+        else:
+            client.playback_modes[guild_id] = PLAYBACK_MODES['LOOP']
+            await interaction.response.send_message('🔁 Loop mode enabled.', ephemeral=True)
+        await update_stable_message(guild_id)
+
     @discord.ui.button(label='🔀 Shuffle', style=ButtonStyle.primary)
     async def shuffle_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         guild_id = str(interaction.guild.id)
         queue = queues.get(guild_id)
         if queue:
             random.shuffle(queue)
+            client.guilds_data[guild_id]['original_queue'] = queue.copy()
             await interaction.response.send_message('🔀 Queue shuffled.', ephemeral=True)
         else:
             await interaction.response.send_message('❌ The queue is empty.', ephemeral=True)
@@ -301,6 +301,7 @@ class MusicControlView(View):
             queue = queues.get(guild_id)
             if queue and 0 <= index < len(queue):
                 removed_song = queue.pop(index)
+                client.guilds_data[guild_id]['original_queue'] = queue.copy()
                 await interaction.response.send_message(f'❌ Removed **{removed_song["title"]}** from the queue.', ephemeral=True)
             else:
                 await interaction.response.send_message('❌ Invalid song index.', ephemeral=True)
@@ -426,38 +427,34 @@ async def play_next(guild_id):
 
     playback_mode = client.playback_modes.get(guild_id, PLAYBACK_MODES['NORMAL'])
 
-    if playback_mode == PLAYBACK_MODES['LOOP']:
+    if playback_mode == PLAYBACK_MODES['REPEAT']:
         # Re-play the current song
         current_song = client.guilds_data[guild_id]['current_song']
         await play_song(guild_id, current_song)
-    elif queues.get(guild_id):
-        if playback_mode == PLAYBACK_MODES['SHUFFLE']:
-            # Shuffle the queue before playing the next song
-            random.shuffle(queues[guild_id])
-
-        song_info = queues[guild_id].pop(0)
-        client.guilds_data[guild_id]['current_song'] = song_info
-        await play_song(guild_id, song_info)
     else:
-        if playback_mode == PLAYBACK_MODES['REPEAT']:
-            # Reset the queue to the original songs
-            original_queue = client.guilds_data[guild_id].get('original_queue', [])
-            if original_queue:
-                queues[guild_id] = original_queue.copy()
-                song_info = queues[guild_id].pop(0)
-                client.guilds_data[guild_id]['current_song'] = song_info
-                await play_song(guild_id, song_info)
-                return
+        if queues.get(guild_id):
+            song_info = queues[guild_id].pop(0)
+            client.guilds_data[guild_id]['current_song'] = song_info
+            await play_song(guild_id, song_info)
+        else:
+            if playback_mode == PLAYBACK_MODES['LOOP']:
+                # Reset the queue to the original songs
+                original_queue = client.guilds_data[guild_id].get('original_queue', [])
+                if original_queue:
+                    queues[guild_id] = original_queue.copy()
+                    song_info = queues[guild_id].pop(0)
+                    client.guilds_data[guild_id]['current_song'] = song_info
+                    await play_song(guild_id, song_info)
+                    return
+            # No more songs in the queue
+            client.guilds_data[guild_id]['current_song'] = None
 
-        # No more songs in the queue
-        client.guilds_data[guild_id]['current_song'] = None
+            # Schedule a delayed disconnect
+            if not client.guilds_data[guild_id].get('disconnect_task'):
+                disconnect_task = client.loop.create_task(disconnect_after_delay(guild_id, delay=300))  # 5 minutes
+                client.guilds_data[guild_id]['disconnect_task'] = disconnect_task
 
-        # Schedule a delayed disconnect
-        if not client.guilds_data[guild_id].get('disconnect_task'):
-            disconnect_task = client.loop.create_task(disconnect_after_delay(guild_id, delay=300))  # 5 minutes
-            client.guilds_data[guild_id]['disconnect_task'] = disconnect_task
-
-        await update_stable_message(guild_id)
+            await update_stable_message(guild_id)
 
 # Function to play a song
 async def play_song(guild_id, song_info):
@@ -477,40 +474,38 @@ async def play_song(guild_id, song_info):
     if not song_url:
         print(f"No valid audio URL found for {song_info.get('title')}")
         return
+
+    # Stop any currently playing audio
+    if voice_client.is_playing() or voice_client.is_paused():
+        voice_client.stop()
+
     player = discord.FFmpegPCMAudio(song_url, **ffmpeg_options)
-    if not voice_client.is_playing():
-        def after_playing(error):
-            if error:
-                print(f"Error occurred while playing: {error}")
-            future = asyncio.run_coroutine_threadsafe(play_next(guild_id), client.loop)
-            try:
-                future.result()
-            except Exception as e:
-                print(f"Error in play_next: {e}")
 
-        voice_client.play(
-            player,
-            after=after_playing
-        )
-        channel_id = client.guilds_data[guild_id]['channel_id']
-        channel = client.get_channel(int(channel_id))
-        await channel.send(f"🎶 Now playing: **{song_info.get('title', 'Unknown title')}**")
-        client.guilds_data[guild_id]['current_song'] = song_info
+    def after_playing(error):
+        if error:
+            print(f"Error occurred while playing: {error}")
+        future = asyncio.run_coroutine_threadsafe(play_next(guild_id), client.loop)
+        try:
+            future.result()
+        except Exception as e:
+            print(f"Error in play_next: {e}")
 
-        # Record the start time and duration using time.monotonic()
-        client.guilds_data[guild_id]['song_start_time'] = time.monotonic()
-        client.guilds_data[guild_id]['song_duration'] = song_info.get('duration', 0)
+    voice_client.play(
+        player,
+        after=after_playing
+    )
+    channel_id = client.guilds_data[guild_id]['channel_id']
+    channel = client.get_channel(int(channel_id))
+    await channel.send(f"🎶 Now playing: **{song_info.get('title', 'Unknown title')}**")
+    client.guilds_data[guild_id]['current_song'] = song_info
 
-        # Start the progress updater task
-        client.guilds_data[guild_id]['progress_task'] = client.loop.create_task(update_progress(guild_id))
-    else:
-        # Add to queue
-        if guild_id not in queues:
-            queues[guild_id] = []
-        queues[guild_id].append(song_info)
-        channel_id = client.guilds_data[guild_id]['channel_id']
-        channel = client.get_channel(int(channel_id))
-        await channel.send(f"➕ Added to queue: **{song_info.get('title', 'Unknown title')}**")
+    # Record the start time and duration using time.monotonic()
+    client.guilds_data[guild_id]['song_start_time'] = time.monotonic()
+    client.guilds_data[guild_id]['song_duration'] = song_info.get('duration', 0)
+
+    # Start the progress updater task
+    client.guilds_data[guild_id]['progress_task'] = client.loop.create_task(update_progress(guild_id))
+
     await update_stable_message(guild_id)
     save_guilds_data()
 
@@ -534,21 +529,26 @@ async def update_progress(guild_id):
 # Helper function to process play requests
 async def process_play_request(user, guild, channel, link, interaction=None):
     guild_id = str(guild.id)
-    # Connect to the voice channel if not already connected
+    # Get the existing voice client
     voice_client = voice_clients.get(guild_id)
-    if not voice_client or not voice_client.is_connected():
-        if user.voice and user.voice.channel:
-            voice_client = await user.voice.channel.connect()
-            voice_clients[guild_id] = voice_client
+    user_voice_channel = user.voice.channel if user.voice else None
+
+    if not user_voice_channel:
+        msg = "❌ You are not connected to a voice channel."
+        if interaction:
+            await interaction.followup.send(msg, ephemeral=True)
         else:
-            msg = "❌ You are not connected to a voice channel."
-            if interaction:
-                await interaction.followup.send(msg, ephemeral=True)
-            else:
-                await channel.send(msg)
-            return
+            await channel.send(msg)
+        return
+
+    if voice_client:
+        if voice_client.channel != user_voice_channel:
+            # Move the bot to the user's voice channel
+            await voice_client.move_to(user_voice_channel)
     else:
-        voice_client = voice_clients[guild_id]
+        # Connect to the user's voice channel
+        voice_client = await user_voice_channel.connect()
+        voice_clients[guild_id] = voice_client
 
     # Cancel any scheduled disconnect task
     cancel_disconnect_task(guild_id)
@@ -608,7 +608,7 @@ async def process_play_request(user, guild, channel, link, interaction=None):
         else:
             await channel.send(msg)
 
-        # Store original queue for repeat functionality
+        # Update original queue for loop functionality
         client.guilds_data[guild_id]['original_queue'] = queues[guild_id].copy()
 
         # Start playing if not already playing
@@ -623,6 +623,14 @@ async def process_play_request(user, guild, channel, link, interaction=None):
         if guild_id not in client.guilds_data:
             client.guilds_data[guild_id] = {}
 
+        # Add to queue
+        if guild_id not in queues:
+            queues[guild_id] = []
+        queues[guild_id].append(song_info)
+
+        # Update original queue
+        client.guilds_data[guild_id]['original_queue'] = queues[guild_id].copy()
+
         # Play or queue the song
         if not voice_client.is_playing():
             client.guilds_data[guild_id]['current_song'] = song_info
@@ -633,17 +641,11 @@ async def process_play_request(user, guild, channel, link, interaction=None):
             else:
                 await channel.send(msg)
         else:
-            if guild_id not in queues:
-                queues[guild_id] = []
-            queues[guild_id].append(song_info)
             msg = f"➕ Added to queue: **{song_info.get('title', 'Unknown title')}**"
             if interaction:
                 await interaction.followup.send(msg)
             else:
                 await channel.send(msg)
-
-            # Store original queue for repeat functionality
-            client.guilds_data[guild_id]['original_queue'] = queues[guild_id].copy()
 
     # Clear messages except the stable message
     guild_data = client.guilds_data.get(guild_id)
@@ -696,7 +698,6 @@ async def stop_command(interaction: discord.Interaction):
         voice_client.stop()
         await voice_client.disconnect()
         voice_clients.pop(guild_id, None)  # Safely remove the voice client
-        queues.pop(guild_id, None)
         client.guilds_data[guild_id]['current_song'] = None
 
         # Cancel the progress updater task
@@ -725,6 +726,7 @@ async def clear_queue_command(interaction: discord.Interaction):
     guild_id = str(interaction.guild.id)
     if guild_id in queues:
         queues[guild_id].clear()
+        client.guilds_data[guild_id]['original_queue'] = []
         await interaction.response.send_message("🗑️ Queue cleared!", ephemeral=True)
     else:
         await interaction.response.send_message("❌ There is no queue to clear.", ephemeral=True)
@@ -762,6 +764,20 @@ async def nowplaying_command(interaction: discord.Interaction):
     now_playing_embed.set_footer(text=f'Playback Mode: {playback_mode}')
 
     await interaction.response.send_message(embed=now_playing_embed, ephemeral=True)
+
+# Remove command
+@client.tree.command(name="remove", description="Remove a song from the queue by its index")
+@discord.app_commands.describe(index="The index of the song to remove (starting from 1)")
+async def remove_command(interaction: discord.Interaction, index: int):
+    guild_id = str(interaction.guild.id)
+    queue = queues.get(guild_id)
+    if queue and 1 <= index <= len(queue):
+        removed_song = queue.pop(index - 1)
+        client.guilds_data[guild_id]['original_queue'] = queue.copy()
+        await interaction.response.send_message(f'❌ Removed **{removed_song["title"]}** from the queue.', ephemeral=True)
+        await update_stable_message(guild_id)
+    else:
+        await interaction.response.send_message('❌ Invalid song index.', ephemeral=True)
 
 # Event handler for message deletion and processing song requests
 @client.event
