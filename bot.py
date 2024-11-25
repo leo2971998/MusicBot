@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 import urllib.parse, urllib.request, re
 import json
 import time
+import random  # Import random module
 
 # Load the environment variables
 load_dotenv()
@@ -21,6 +22,17 @@ intents.guilds = True
 intents.members = True
 client = commands.Bot(command_prefix=".", intents=intents)
 client.guilds_data = {}  # Initialize guilds_data here
+
+# Initialize playback modes
+client.playback_modes = {}
+
+# Define playback modes
+PLAYBACK_MODES = {
+    'NORMAL': 'normal',
+    'LOOP': 'loop',
+    'REPEAT': 'repeat',
+    'SHUFFLE': 'shuffle'
+}
 
 # Define global variables for managing queues and voice clients
 queues = {}
@@ -59,19 +71,27 @@ def save_guilds_data():
         data_to_save.pop('progress_task', None)  # Exclude the progress_task
         data_to_save.pop('disconnect_task', None)  # Exclude the disconnect_task
         serializable_data[guild_id] = data_to_save
+    data = {
+        'guilds_data': serializable_data,
+        'playback_modes': client.playback_modes
+    }
     with open(DATA_FILE, 'w') as f:
-        json.dump(serializable_data, f)
+        json.dump(data, f)
 
 def load_guilds_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'r') as f:
             try:
-                client.guilds_data = json.load(f)
+                data = json.load(f)
+                client.guilds_data = data.get('guilds_data', {})
+                client.playback_modes = data.get('playback_modes', {})
             except json.JSONDecodeError:
                 print("Invalid JSON in guilds_data.json. Initializing with empty data.")
                 client.guilds_data = {}
+                client.playback_modes = {}
     else:
         client.guilds_data = {}
+        client.playback_modes = {}
 
 # Bot ready event
 @client.event
@@ -197,6 +217,9 @@ class MusicControlView(View):
                 disconnect_task.cancel()
                 client.guilds_data[guild_id]['disconnect_task'] = None
 
+            # Reset playback mode to NORMAL
+            client.playback_modes[guild_id] = PLAYBACK_MODES['NORMAL']
+
             await interaction.response.send_message('⏹️ Stopped the music and left the voice channel.', ephemeral=True)
         else:
             await interaction.response.send_message('❌ Not connected to a voice channel.', ephemeral=True)
@@ -211,6 +234,54 @@ class MusicControlView(View):
         else:
             await interaction.response.send_message('❌ The queue is already empty.', ephemeral=True)
         await update_stable_message(guild_id)
+
+    @discord.ui.button(label='🔁 Loop', style=ButtonStyle.primary)
+    async def loop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild_id = str(interaction.guild.id)
+        current_mode = client.playback_modes.get(guild_id, PLAYBACK_MODES['NORMAL'])
+        if current_mode == PLAYBACK_MODES['LOOP']:
+            client.playback_modes[guild_id] = PLAYBACK_MODES['NORMAL']
+            await interaction.response.send_message('🔁 Loop mode disabled.', ephemeral=True)
+        else:
+            client.playback_modes[guild_id] = PLAYBACK_MODES['LOOP']
+            await interaction.response.send_message('🔁 Loop mode enabled.', ephemeral=True)
+        await update_stable_message(guild_id)
+
+    @discord.ui.button(label='🔂 Repeat', style=ButtonStyle.primary)
+    async def repeat_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild_id = str(interaction.guild.id)
+        current_mode = client.playback_modes.get(guild_id, PLAYBACK_MODES['NORMAL'])
+        if current_mode == PLAYBACK_MODES['REPEAT']:
+            client.playback_modes[guild_id] = PLAYBACK_MODES['NORMAL']
+            await interaction.response.send_message('🔂 Repeat mode disabled.', ephemeral=True)
+        else:
+            client.playback_modes[guild_id] = PLAYBACK_MODES['REPEAT']
+            await interaction.response.send_message('🔂 Repeat mode enabled.', ephemeral=True)
+        await update_stable_message(guild_id)
+
+    @discord.ui.button(label='🔀 Shuffle', style=ButtonStyle.primary)
+    async def shuffle_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild_id = str(interaction.guild.id)
+        queue = queues.get(guild_id)
+        if queue:
+            random.shuffle(queue)
+            await interaction.response.send_message('🔀 Queue shuffled.', ephemeral=True)
+        else:
+            await interaction.response.send_message('❌ The queue is empty.', ephemeral=True)
+        await update_stable_message(guild_id)
+
+    @discord.ui.button(label='➕ Add Song', style=ButtonStyle.success)
+    async def add_song_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message('Please enter the song name or URL:', ephemeral=True)
+
+        def check(m):
+            return m.author == interaction.user and m.channel == interaction.channel
+
+        try:
+            msg = await client.wait_for('message', timeout=30.0, check=check)
+            await process_play_request(interaction.user, interaction.guild, interaction.channel, msg.content)
+        except asyncio.TimeoutError:
+            await interaction.followup.send('❌ You took too long to respond.', ephemeral=True)
 
     def generate_remove_buttons(self):
         max_components = 25 - len(self.children)  # Adjust for existing buttons
@@ -255,7 +326,6 @@ def create_progress_bar_emoji(elapsed, duration):
     return bar
 
 # Update the stable message with current song and queue
-# Update the stable message with current song and queue
 async def update_stable_message(guild_id):
     guild_id = str(guild_id)
     guild_data = client.guilds_data.get(guild_id)
@@ -292,7 +362,10 @@ async def update_stable_message(guild_id):
 
         # Add progress information
         now_playing_embed.add_field(name='Progress', value=f"`{elapsed_str} / {duration_str}`\n{progress_bar}", inline=False)
-        now_playing_embed.set_footer(text='Use the buttons below to control playback.')
+
+        # Add playback mode to the embed
+        playback_mode = client.playback_modes.get(guild_id, PLAYBACK_MODES['NORMAL']).capitalize()
+        now_playing_embed.set_footer(text=f'Playback Mode: {playback_mode}')
     else:
         now_playing_embed = Embed(
             title='🎶 Now Playing',
@@ -351,11 +424,31 @@ async def play_next(guild_id):
         progress_task.cancel()
         client.guilds_data[guild_id]['progress_task'] = None
 
-    if queues.get(guild_id):
+    playback_mode = client.playback_modes.get(guild_id, PLAYBACK_MODES['NORMAL'])
+
+    if playback_mode == PLAYBACK_MODES['LOOP']:
+        # Re-play the current song
+        current_song = client.guilds_data[guild_id]['current_song']
+        await play_song(guild_id, current_song)
+    elif queues.get(guild_id):
+        if playback_mode == PLAYBACK_MODES['SHUFFLE']:
+            # Shuffle the queue before playing the next song
+            random.shuffle(queues[guild_id])
+
         song_info = queues[guild_id].pop(0)
         client.guilds_data[guild_id]['current_song'] = song_info
         await play_song(guild_id, song_info)
     else:
+        if playback_mode == PLAYBACK_MODES['REPEAT']:
+            # Reset the queue to the original songs
+            original_queue = client.guilds_data[guild_id].get('original_queue', [])
+            if original_queue:
+                queues[guild_id] = original_queue.copy()
+                song_info = queues[guild_id].pop(0)
+                client.guilds_data[guild_id]['current_song'] = song_info
+                await play_song(guild_id, song_info)
+                return
+
         # No more songs in the queue
         client.guilds_data[guild_id]['current_song'] = None
 
@@ -515,6 +608,9 @@ async def process_play_request(user, guild, channel, link, interaction=None):
         else:
             await channel.send(msg)
 
+        # Store original queue for repeat functionality
+        client.guilds_data[guild_id]['original_queue'] = queues[guild_id].copy()
+
         # Start playing if not already playing
         if not voice_client.is_playing() and not voice_client.is_paused():
             await play_next(guild_id)
@@ -545,6 +641,9 @@ async def process_play_request(user, guild, channel, link, interaction=None):
                 await interaction.followup.send(msg)
             else:
                 await channel.send(msg)
+
+            # Store original queue for repeat functionality
+            client.guilds_data[guild_id]['original_queue'] = queues[guild_id].copy()
 
     # Clear messages except the stable message
     guild_data = client.guilds_data.get(guild_id)
@@ -612,6 +711,9 @@ async def stop_command(interaction: discord.Interaction):
             disconnect_task.cancel()
             client.guilds_data[guild_id]['disconnect_task'] = None
 
+        # Reset playback mode to NORMAL
+        client.playback_modes[guild_id] = PLAYBACK_MODES['NORMAL']
+
         await interaction.response.send_message("⏹️ Stopped the music and left the voice channel.", ephemeral=True)
         await update_stable_message(guild_id)
     else:
@@ -647,6 +749,9 @@ async def nowplaying_command(interaction: discord.Interaction):
     duration_str = format_time(duration)
     progress_bar = create_progress_bar_emoji(elapsed, duration)
 
+    # Add playback mode to the embed
+    playback_mode = client.playback_modes.get(guild_id, PLAYBACK_MODES['NORMAL']).capitalize()
+
     now_playing_embed = Embed(
         title='🎶 Now Playing',
         description=f"**[{current_song['title']}]({current_song['webpage_url']})**",
@@ -654,6 +759,7 @@ async def nowplaying_command(interaction: discord.Interaction):
     )
     now_playing_embed.set_thumbnail(url=current_song.get('thumbnail'))
     now_playing_embed.add_field(name='Progress', value=f"`{elapsed_str} / {duration_str}`\n{progress_bar}", inline=False)
+    now_playing_embed.set_footer(text=f'Playback Mode: {playback_mode}')
 
     await interaction.response.send_message(embed=now_playing_embed, ephemeral=True)
 
@@ -700,4 +806,3 @@ async def disconnect_after_delay(guild_id, delay):
 
 # Run the bot
 client.run(TOKEN)
-I have a problem with this code. It's too much. Is there a way we can split them into different files
