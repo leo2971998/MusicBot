@@ -4,6 +4,7 @@ import discord
 from discord.ext import commands
 import os
 from dotenv import load_dotenv
+import asyncio
 
 # Load the environment variables
 load_dotenv()
@@ -17,7 +18,6 @@ intents.members = True
 
 client = commands.Bot(command_prefix=".", intents=intents)
 
-# Load cogs
 async def load_cogs():
     await client.load_extension("cogs.music")
     await client.load_extension("cogs.events")
@@ -27,7 +27,11 @@ async def on_ready():
     await client.tree.sync()
     print(f'{client.user} is now jamming!')
 
+async def main():
+    async with client:
+        await load_cogs()
+        await client.start(TOKEN)
+
 # Entry point
 if __name__ == "__main__":
-    client.loop.create_task(load_cogs())
-    client.run(TOKEN)
+    asyncio.run(main())
