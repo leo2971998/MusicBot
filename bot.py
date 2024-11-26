@@ -343,6 +343,9 @@ class AddSongModal(Modal):
     async def on_submit(self, interaction: discord.Interaction):
         user_input = self.song_input.value.strip()
 
+        # Defer the interaction
+        await interaction.response.defer(ephemeral=True)
+
         # Check if the input is a URL
         if 'list=' in user_input or 'watch?v=' in user_input or 'youtu.be/' in user_input:
             # It's a URL, proceed to add the song
@@ -361,15 +364,15 @@ class AddSongModal(Modal):
             try:
                 search_results = ytdl.extract_info(search_query, download=False)['entries']
                 if not search_results:
-                    await interaction.response.send_message("❌ No results found.", ephemeral=True)
+                    await interaction.followup.send("❌ No results found.", ephemeral=True)
                     return
 
                 # Create a view with a Select menu
                 view = SongSelectionView(search_results, interaction)
-                await interaction.response.send_message("Select the song you want to add:", view=view, ephemeral=True)
+                await interaction.followup.send("Select the song you want to add:", view=view, ephemeral=True)
             except Exception as e:
                 msg = f"❌ Error searching for the song: {e}"
-                await interaction.response.send_message(msg, ephemeral=True)
+                await interaction.followup.send(msg, ephemeral=True)
 
 # Create the SongSelectionView class
 class SongSelectionView(View):
