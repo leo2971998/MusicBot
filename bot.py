@@ -170,6 +170,7 @@ class MusicControlView(View):
         super().__init__(timeout=None)
         self.bot = bot
         self.guild_id = guild_id
+        self.search_results = []
         self.add_controls()
 
     def add_controls(self):
@@ -188,14 +189,15 @@ class MusicControlView(View):
         self.add_item(Button(label='🔁 Repeat All', style=ButtonStyle.secondary, custom_id='repeat_all'))
         # Add Song button
         self.add_item(Button(label='➕ Add Song', style=ButtonStyle.success, custom_id='add_song'))
+        # Add the select menu (initially disabled)
+        self.song_select = SongSelect(self)
+        self.add_item(self.song_select)
 
-    def add_select_menu(self, options):
-        # Clear existing items
-        self.clear_items()
-        # Add select menu
-        self.add_item(SongSelect(options, self))
-        # Cancel button
-        self.add_item(Button(label='Cancel', style=ButtonStyle.danger, custom_id='cancel'))
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return True  # Allow all interactions for now
+
+    async def on_timeout(self):
+        pass  # Keep the view active indefinitely
 
     @discord.ui.button(label='➕ Add Song', style=ButtonStyle.success, custom_id='add_song')
     async def add_song_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -204,17 +206,6 @@ class MusicControlView(View):
         # Store the interaction for later use
         modal.interaction = interaction
         modal.view = self
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return True  # Allow all interactions for now
-
-    async def on_timeout(self):
-        pass  # Keep the view active indefinitely
-
-    @discord.ui.button(label='Cancel', style=ButtonStyle.danger, custom_id='cancel', row=4)
-    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.add_controls()
-        await update_stable_message(self.guild_id)
 
     async def on_button_click(self, interaction: discord.Interaction):
         custom_id = interaction.data['custom_id']
@@ -240,7 +231,7 @@ class MusicControlView(View):
             await self.set_playback_mode(interaction, PlaybackMode.REPEAT_ALL)
         elif custom_id == 'cancel':
             self.add_controls()
-            await update_stable_message(guild_id)
+            await update_stable_message(guild_id, view=self)
 
     async def pause(self, interaction):
         guild_id = str(interaction.guild.id)
@@ -347,19 +338,9 @@ class AddSongModal(Modal):
                 await interaction.followup.send("❌ No results found.", ephemeral=True)
                 return
 
-            # Create options for the select menu
-            options = [
-                discord.SelectOption(
-                    label=entry.get('title', 'Unknown title')[:100],
-                    description=entry.get('uploader', '')[:100],
-                    value=str(index)
-                )
-                for index, entry in enumerate(search_results)
-            ]
-
-            # Update the view to include the select menu
-            self.view.add_select_menu(options)
+            # Update the select menu options
             self.view.search_results = search_results
+            self.view.song_select.update_options(search_results)
             guild_id = str(interaction.guild.id)
             await update_stable_message(guild_id, view=self.view)
             await interaction.followup.send("Select a song from the menu below.", ephemeral=True)
@@ -369,10 +350,23 @@ class AddSongModal(Modal):
             await interaction.followup.send(msg, ephemeral=True)
 
 class SongSelect(Select):
-    def __init__(self, options, parent_view):
-        super().__init__(placeholder="Choose a song...", min_values=1,
-                         max_values=1, options=options)
+    def __init__(self, parent_view):
+        super().__init__(placeholder="No search results yet. Click 'Add Song' to search.",
+                         min_values=1, max_values=1, options=[], disabled=True)
         self.parent_view = parent_view
+
+    def update_options(self, search_results):
+        self.options = [
+            discord.SelectOption(
+                label=entry.get('title', 'Unknown title')[:100],
+                description=entry.get('uploader', '')[:100],
+                value=str(index)
+            )
+            for index, entry in enumerate(search_results)
+        ]
+        self.disabled = False
+        self.placeholder = "Select a song..."
+        self.parent_view.add_item(self)
 
     async def callback(self, interaction: discord.Interaction):
         selected_index = int(self.values[0])
@@ -385,8 +379,11 @@ class SongSelect(Select):
             selected_song['webpage_url'],
             interaction=interaction
         )
-        # Revert the view back to controls
-        self.parent_view.add_controls()
+        # Reset the select menu
+        self.options = []
+        self.disabled = True
+        self.placeholder = "No search results yet. Click 'Add Song' to search."
+        self.parent_view.search_results = []
         guild_id = str(interaction.guild.id)
         await update_stable_message(guild_id, view=self.parent_view)
         await interaction.response.defer()  # Acknowledge the interaction silently
