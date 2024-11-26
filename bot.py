@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands
-from discord.ui import Button, View
+from discord.ui import Button, View, Modal, TextInput, Select
 from discord import Embed, ButtonStyle, app_commands
 import os
 import asyncio
@@ -166,66 +166,123 @@ async def setup(interaction: discord.Interaction):
 
 # Define the MusicControlView
 class MusicControlView(View):
-    def __init__(self):
+    def __init__(self, bot, guild_id):
         super().__init__(timeout=None)
+        self.bot = bot
+        self.guild_id = guild_id
+        self.add_controls()
 
-    @discord.ui.button(label='⏸️ Pause', style=ButtonStyle.primary)
-    async def pause_button(self, interaction: discord.Interaction,
-                           button: discord.ui.Button):
+    def add_controls(self):
+        # Clear existing items
+        self.clear_items()
+        # Add control buttons
+        self.add_item(Button(label='⏸️ Pause', style=ButtonStyle.primary, custom_id='pause'))
+        self.add_item(Button(label='▶️ Resume', style=ButtonStyle.primary, custom_id='resume'))
+        self.add_item(Button(label='⏭️ Skip', style=ButtonStyle.primary, custom_id='skip'))
+        self.add_item(Button(label='⏹️ Stop', style=ButtonStyle.primary, custom_id='stop'))
+        self.add_item(Button(label='🗑️ Clear Queue', style=ButtonStyle.danger, custom_id='clear_queue'))
+        self.add_item(Button(label='🔀 Shuffle', style=ButtonStyle.primary, custom_id='shuffle'))
+        # Playback mode buttons
+        self.add_item(Button(label='🔁 Normal', style=ButtonStyle.secondary, custom_id='normal_mode'))
+        self.add_item(Button(label='🔂 Repeat One', style=ButtonStyle.secondary, custom_id='repeat_one'))
+        self.add_item(Button(label='🔁 Repeat All', style=ButtonStyle.secondary, custom_id='repeat_all'))
+        # Add Song button
+        self.add_item(Button(label='➕ Add Song', style=ButtonStyle.success, custom_id='add_song'))
+
+    def add_select_menu(self, options):
+        # Clear existing items
+        self.clear_items()
+        # Add select menu
+        self.add_item(SongSelect(options, self))
+        # Cancel button
+        self.add_item(Button(label='Cancel', style=ButtonStyle.danger, custom_id='cancel'))
+
+    @discord.ui.button(label='➕ Add Song', style=ButtonStyle.success, custom_id='add_song')
+    async def add_song_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = AddSongModal()
+        await interaction.response.send_modal(modal)
+        # Store the interaction for later use
+        modal.interaction = interaction
+        modal.view = self
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return True  # Allow all interactions for now
+
+    async def on_timeout(self):
+        pass  # Keep the view active indefinitely
+
+    @discord.ui.button(label='Cancel', style=ButtonStyle.danger, custom_id='cancel', row=4)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.add_controls()
+        await update_stable_message(self.guild_id)
+
+    async def on_button_click(self, interaction: discord.Interaction):
+        custom_id = interaction.data['custom_id']
+        guild_id = str(interaction.guild.id)
+
+        if custom_id == 'pause':
+            await self.pause(interaction)
+        elif custom_id == 'resume':
+            await self.resume(interaction)
+        elif custom_id == 'skip':
+            await self.skip(interaction)
+        elif custom_id == 'stop':
+            await self.stop(interaction)
+        elif custom_id == 'clear_queue':
+            await self.clear_queue(interaction)
+        elif custom_id == 'shuffle':
+            await self.shuffle(interaction)
+        elif custom_id == 'normal_mode':
+            await self.set_playback_mode(interaction, PlaybackMode.NORMAL)
+        elif custom_id == 'repeat_one':
+            await self.set_playback_mode(interaction, PlaybackMode.REPEAT_ONE)
+        elif custom_id == 'repeat_all':
+            await self.set_playback_mode(interaction, PlaybackMode.REPEAT_ALL)
+        elif custom_id == 'cancel':
+            self.add_controls()
+            await update_stable_message(guild_id)
+
+    async def pause(self, interaction):
         guild_id = str(interaction.guild.id)
         voice_client = voice_clients.get(guild_id)
         if voice_client and voice_client.is_playing():
             voice_client.pause()
-            await interaction.response.send_message('⏸️ Paused the music.',
-                                                    ephemeral=True)
+            await interaction.response.send_message('⏸️ Paused the music.', ephemeral=True)
         else:
-            await interaction.response.send_message('❌ Nothing is playing.',
-                                                    ephemeral=True)
+            await interaction.response.send_message('❌ Nothing is playing.', ephemeral=True)
         await update_stable_message(guild_id)
 
-    @discord.ui.button(label='▶️ Resume', style=ButtonStyle.primary)
-    async def resume_button(self, interaction: discord.Interaction,
-                            button: discord.ui.Button):
+    async def resume(self, interaction):
         guild_id = str(interaction.guild.id)
         voice_client = voice_clients.get(guild_id)
         if voice_client and voice_client.is_paused():
             voice_client.resume()
-            await interaction.response.send_message('▶️ Resumed the music.',
-                                                    ephemeral=True)
+            await interaction.response.send_message('▶️ Resumed the music.', ephemeral=True)
         else:
-            await interaction.response.send_message('❌ Nothing is paused.',
-                                                    ephemeral=True)
+            await interaction.response.send_message('❌ Nothing is paused.', ephemeral=True)
         await update_stable_message(guild_id)
 
-    @discord.ui.button(label='⏭️ Skip', style=ButtonStyle.primary)
-    async def skip_button(self, interaction: discord.Interaction,
-                          button: discord.ui.Button):
+    async def skip(self, interaction):
         guild_id = str(interaction.guild.id)
         voice_client = voice_clients.get(guild_id)
-        if voice_client and (voice_client.is_playing() or
-                             voice_client.is_paused()):
+        if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
             voice_client.stop()
-            await interaction.response.send_message('⏭️ Skipped the song.',
-                                                    ephemeral=True)
+            await interaction.response.send_message('⏭️ Skipped the song.', ephemeral=True)
         else:
-            await interaction.response.send_message('❌ Nothing is playing.',
-                                                    ephemeral=True)
+            await interaction.response.send_message('❌ Nothing is playing.', ephemeral=True)
         await update_stable_message(guild_id)
 
-    @discord.ui.button(label='⏹️ Stop', style=ButtonStyle.primary)
-    async def stop_button(self, interaction: discord.Interaction,
-                          button: discord.ui.Button):
+    async def stop(self, interaction):
         guild_id = str(interaction.guild.id)
         voice_client = voice_clients.get(guild_id)
         if voice_client:
             voice_client.stop()
             await voice_client.disconnect()
-            voice_clients.pop(guild_id, None)  # Safely remove the voice client
+            voice_clients.pop(guild_id, None)
             client.guilds_data[guild_id]['current_song'] = None
 
             # Cancel the disconnect task if it exists
-            disconnect_task = client.guilds_data[guild_id].get(
-                'disconnect_task')
+            disconnect_task = client.guilds_data[guild_id].get('disconnect_task')
             if disconnect_task:
                 disconnect_task.cancel()
                 client.guilds_data[guild_id]['disconnect_task'] = None
@@ -234,69 +291,105 @@ class MusicControlView(View):
             client.playback_modes[guild_id] = PlaybackMode.NORMAL
 
             await interaction.response.send_message(
-                '⏹️ Stopped the music and left the voice channel.',
-                ephemeral=True)
+                '⏹️ Stopped the music and left the voice channel.', ephemeral=True)
         else:
             await interaction.response.send_message(
                 '❌ Not connected to a voice channel.', ephemeral=True)
         await update_stable_message(guild_id)
 
-    @discord.ui.button(label='🗑️ Clear Queue', style=ButtonStyle.danger)
-    async def clear_queue_button(self, interaction: discord.Interaction,
-                                 button: discord.ui.Button):
+    async def clear_queue(self, interaction):
         guild_id = str(interaction.guild.id)
         if guild_id in queues:
             queues[guild_id].clear()
-            await interaction.response.send_message('🗑️ Cleared the queue.',
-                                                    ephemeral=True)
+            await interaction.response.send_message('🗑️ Cleared the queue.', ephemeral=True)
         else:
-            await interaction.response.send_message('❌ The queue is already '
-                                                    'empty.', ephemeral=True)
+            await interaction.response.send_message('❌ The queue is already empty.', ephemeral=True)
         await update_stable_message(guild_id)
 
-    # Separate buttons for playback modes
-    @discord.ui.button(label='🔁 Normal', style=ButtonStyle.secondary)
-    async def normal_mode_button(self, interaction: discord.Interaction,
-                                 button: discord.ui.Button):
-        guild_id = str(interaction.guild.id)
-        client.playback_modes[guild_id] = PlaybackMode.NORMAL
-        await interaction.response.send_message('Playback mode set to: '
-                                                '**Normal**', ephemeral=True)
-        await update_stable_message(guild_id)
-
-    @discord.ui.button(label='🔂 Repeat One', style=ButtonStyle.secondary)
-    async def repeat_one_button(self, interaction: discord.Interaction,
-                                button: discord.ui.Button):
-        guild_id = str(interaction.guild.id)
-        client.playback_modes[guild_id] = PlaybackMode.REPEAT_ONE
-        await interaction.response.send_message('Playback mode set to: '
-                                                '**Repeat One**',
-                                                ephemeral=True)
-        await update_stable_message(guild_id)
-
-    @discord.ui.button(label='🔁 Repeat All', style=ButtonStyle.secondary)
-    async def repeat_all_button(self, interaction: discord.Interaction,
-                                button: discord.ui.Button):
-        guild_id = str(interaction.guild.id)
-        client.playback_modes[guild_id] = PlaybackMode.REPEAT_ALL
-        await interaction.response.send_message('Playback mode set to: '
-                                                '**Repeat All**',
-                                                ephemeral=True)
-        await update_stable_message(guild_id)
-
-    @discord.ui.button(label='🔀 Shuffle', style=ButtonStyle.primary)
-    async def shuffle_button(self, interaction: discord.Interaction,
-                             button: discord.ui.Button):
+    async def shuffle(self, interaction):
         guild_id = str(interaction.guild.id)
         queue = queues.get(guild_id)
         if queue:
             random.shuffle(queue)
-            await interaction.response.send_message('🔀 Queue shuffled.',
-                                                    ephemeral=True)
+            await interaction.response.send_message('🔀 Queue shuffled.', ephemeral=True)
         else:
-            await interaction.response.send_message('❌ The queue is empty.',
-                                                    ephemeral=True)
+            await interaction.response.send_message('❌ The queue is empty.', ephemeral=True)
         await update_stable_message(guild_id)
+
+    async def set_playback_mode(self, interaction, mode):
+        guild_id = str(interaction.guild.id)
+        client.playback_modes[guild_id] = mode
+        await interaction.response.send_message(f'Playback mode set to: **{mode.name.replace("_", " ").title()}**', ephemeral=True)
+        await update_stable_message(guild_id)
+
+class AddSongModal(Modal):
+    def __init__(self):
+        super().__init__(title="Add Song")
+        self.song_input = TextInput(
+            label="Song Name or URL",
+            placeholder="Enter the song name or YouTube URL",
+            required=True,
+            max_length=100
+        )
+        self.add_item(self.song_input)
+        self.interaction = None  # Will be set when modal is invoked
+        self.view = None  # Will be set when modal is invoked
+
+    async def on_submit(self, interaction: discord.Interaction):
+        user_input = self.song_input.value.strip()
+        await interaction.response.defer(ephemeral=True)
+        # Search for the song
+        search_query = f"ytsearch5:{user_input}"
+        try:
+            search_results = ytdl.extract_info(
+                search_query, download=False)['entries']
+            if not search_results:
+                await interaction.followup.send("❌ No results found.", ephemeral=True)
+                return
+
+            # Create options for the select menu
+            options = [
+                discord.SelectOption(
+                    label=entry.get('title', 'Unknown title')[:100],
+                    description=entry.get('uploader', '')[:100],
+                    value=str(index)
+                )
+                for index, entry in enumerate(search_results)
+            ]
+
+            # Update the view to include the select menu
+            self.view.add_select_menu(options)
+            self.view.search_results = search_results
+            guild_id = str(interaction.guild.id)
+            await update_stable_message(guild_id, view=self.view)
+            await interaction.followup.send("Select a song from the menu below.", ephemeral=True)
+
+        except Exception as e:
+            msg = f"❌ Error searching for the song: {e}"
+            await interaction.followup.send(msg, ephemeral=True)
+
+class SongSelect(Select):
+    def __init__(self, options, parent_view):
+        super().__init__(placeholder="Choose a song...", min_values=1,
+                         max_values=1, options=options)
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_index = int(self.values[0])
+        selected_song = self.parent_view.search_results[selected_index]
+        # Proceed to add the selected song
+        await process_play_request(
+            interaction.user,
+            interaction.guild,
+            interaction.channel,
+            selected_song['webpage_url'],
+            interaction=interaction
+        )
+        # Revert the view back to controls
+        self.parent_view.add_controls()
+        guild_id = str(interaction.guild.id)
+        await update_stable_message(guild_id, view=self.parent_view)
+        await interaction.response.defer()  # Acknowledge the interaction silently
 
 # Create a function to format time
 def format_time(seconds):
@@ -305,7 +398,7 @@ def format_time(seconds):
     return f"{minutes:02d}:{seconds:02d}"
 
 # Update the stable message with current song and queue
-async def update_stable_message(guild_id):
+async def update_stable_message(guild_id, view=None):
     guild_id = str(guild_id)
     guild_data = client.guilds_data.get(guild_id)
     if not guild_data:
@@ -364,16 +457,12 @@ async def update_stable_message(guild_id):
     )
     queue_embed.set_footer(text=f"Total songs in queue: {len(queue)}")
 
-    # Create the MusicControlView
-    view = MusicControlView()
-
-    # Instructions for adding songs
-    content = "🎶 **Music Bot** 🎶\n\nUse `/play <song name or URL>` to add songs to the queue."
+    # Use the provided view or create a new one
+    if not view:
+        view = MusicControlView(client, guild_id)
 
     try:
-        await stable_message.edit(content=content,
-                                  embeds=[now_playing_embed, queue_embed],
-                                  view=view)
+        await stable_message.edit(content='', embeds=[now_playing_embed, queue_embed], view=view)
     except discord.errors.HTTPException as e:
         print(f"Rate limit hit when updating message in guild {guild_id}: {e}")
 
@@ -545,7 +634,7 @@ async def process_play_request(user, guild, channel, link, interaction=None,
         return
 
     # Handle single video or playlist
-    if 'entries' in data:
+    if 'entries' in data and data.get('_type') == 'playlist':
         # Playlist detected
         playlist_entries = data['entries']
         added_songs = []
