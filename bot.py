@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands
-from discord.ui import Button, View, Modal, TextInput
+from discord.ui import Button, View, Modal, TextInput, Select
 from discord import Embed, ButtonStyle
 import os
 import asyncio
@@ -278,25 +278,11 @@ class MusicControlView(View):
         # Schedule deletion of the interaction response
         await self.delete_interaction_message(interaction)
 
+    # Update Add Song button to use Modal
     @discord.ui.button(label='➕ Add Song', style=ButtonStyle.success)
     async def add_song_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message('Please enter the song name or URL:', ephemeral=True)
-
-        def check(m):
-            return m.author == interaction.user and m.channel == interaction.channel
-
-        try:
-            msg = await client.wait_for('message', timeout=30.0, check=check)
-            await process_play_request(interaction.user, interaction.guild, interaction.channel, msg.content)
-            # Delete the user's message after processing
-            try:
-                await msg.delete()
-            except:
-                pass
-            # Clear other messages
-            await clear_channel_messages(interaction.channel, client.guilds_data[str(interaction.guild.id)]['stable_message_id'])
-        except asyncio.TimeoutError:
-            await interaction.followup.send('❌ You took too long to respond.', ephemeral=True)
+        modal = AddSongModal()
+        await interaction.response.send_modal(modal)
 
     # Update Remove button to use Modal
     @discord.ui.button(label='❌ Remove', style=ButtonStyle.danger)
@@ -341,6 +327,96 @@ class RemoveSongModal(Modal):
                 await interaction.response.send_message('❌ Invalid song index.', ephemeral=True)
         except ValueError:
             await interaction.response.send_message('❌ Please enter a valid number.', ephemeral=True)
+
+# Create the AddSongModal class
+class AddSongModal(Modal):
+    def __init__(self):
+        super().__init__(title="Add Song")
+        self.song_input = TextInput(
+            label="Song Name or URL",
+            placeholder="Enter the song name or YouTube URL",
+            required=True,
+            max_length=100
+        )
+        self.add_item(self.song_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        user_input = self.song_input.value.strip()
+
+        # Check if the input is a URL
+        if 'list=' in user_input or 'watch?v=' in user_input or 'youtu.be/' in user_input:
+            # It's a URL, proceed to add the song
+            await process_play_request(
+                interaction.user,
+                interaction.guild,
+                interaction.channel,
+                user_input,
+                interaction=interaction
+            )
+            # Optionally delete the interaction message after a delay
+            await delete_interaction_message(interaction)
+        else:
+            # It's a search query, get top 5 results
+            search_query = f"ytsearch5:{user_input}"
+            try:
+                search_results = ytdl.extract_info(search_query, download=False)['entries']
+                if not search_results:
+                    await interaction.response.send_message("❌ No results found.", ephemeral=True)
+                    return
+
+                # Create a view with a Select menu
+                view = SongSelectionView(search_results, interaction)
+                await interaction.response.send_message("Select the song you want to add:", view=view, ephemeral=True)
+            except Exception as e:
+                msg = f"❌ Error searching for the song: {e}"
+                await interaction.response.send_message(msg, ephemeral=True)
+
+# Create the SongSelectionView class
+class SongSelectionView(View):
+    def __init__(self, search_results, interaction):
+        super().__init__(timeout=60)
+        self.interaction = interaction
+        self.search_results = search_results
+        # Create options for the Select menu
+        options = [
+            discord.SelectOption(
+                label=entry.get('title', 'Unknown title')[:100],
+                description=entry.get('uploader', '')[:100],
+                value=str(index)
+            )
+            for index, entry in enumerate(search_results)
+        ]
+        self.add_item(SongSelect(options, self))
+
+    async def on_timeout(self):
+        # Disable the Select menu when the view times out
+        for child in self.children:
+            child.disabled = True
+        await self.interaction.edit_original_response(view=self)
+
+class SongSelect(Select):
+    def __init__(self, options, parent_view):
+        super().__init__(placeholder="Choose a song...", min_values=1, max_values=1, options=options)
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_index = int(self.values[0])
+        selected_song = self.parent_view.search_results[selected_index]
+        # Proceed to add the selected song
+        await process_play_request(
+            interaction.user,
+            interaction.guild,
+            interaction.channel,
+            selected_song['webpage_url'],
+            interaction=interaction
+        )
+        # Disable the Select menu after selection
+        self.parent_view.stop()
+        for child in self.parent_view.children:
+            child.disabled = True
+        await interaction.response.edit_message(view=self.parent_view)
+        # Optionally delete the interaction message after a delay
+        await delete_interaction_message(interaction)
 
 # Create a function to format time
 def format_time(seconds):
