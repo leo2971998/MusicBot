@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands
-from discord.ui import Button, View, Modal, TextInput, Select
+from discord.ui import Button, View
 from discord import Embed, ButtonStyle, app_commands
 import os
 import asyncio
@@ -45,6 +45,7 @@ yt_dl_options = {
     "default_search": "auto",
     "extract_flat": False,
     "nocheckcertificate": True,
+    "ignoreerrors": True,
 }
 ytdl = yt_dlp.YoutubeDL(yt_dl_options)
 
@@ -65,7 +66,6 @@ def save_guilds_data():
         data_to_save = guild_data.copy()
         # Exclude non-serializable items
         data_to_save.pop('stable_message', None)
-        data_to_save.pop('progress_task', None)
         data_to_save.pop('disconnect_task', None)
         serializable_data[guild_id] = data_to_save
     data = {
@@ -166,9 +166,8 @@ async def setup(interaction: discord.Interaction):
 
 # Define the MusicControlView
 class MusicControlView(View):
-    def __init__(self, queue):
+    def __init__(self):
         super().__init__(timeout=None)
-        self.queue = queue
 
     @discord.ui.button(label='⏸️ Pause', style=ButtonStyle.primary)
     async def pause_button(self, interaction: discord.Interaction,
@@ -299,160 +298,6 @@ class MusicControlView(View):
                                                     ephemeral=True)
         await update_stable_message(guild_id)
 
-    # Add Song button using Modal
-    @discord.ui.button(label='➕ Add Song', style=ButtonStyle.success)
-    async def add_song_button(self, interaction: discord.Interaction,
-                              button: discord.ui.Button):
-        modal = AddSongModal()
-        await interaction.response.send_modal(modal)
-
-    # Remove button using Modal
-    @discord.ui.button(label='❌ Remove', style=ButtonStyle.danger)
-    async def remove_button(self, interaction: discord.Interaction,
-                            button: discord.ui.Button):
-        modal = RemoveSongModal()
-        await interaction.response.send_modal(modal)
-
-# Create the RemoveSongModal class
-class RemoveSongModal(Modal):
-    def __init__(self):
-        super().__init__(title="Remove Song")
-        self.song_index = TextInput(
-            label="Song Index",
-            placeholder="Enter the number of the song to remove",
-            required=True
-        )
-        self.add_item(self.song_index)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            index = self.song_index.value.strip()
-            guild_id = str(interaction.guild.id)
-            queue = queues.get(guild_id)
-            index = int(index)
-            if queue and 1 <= index <= len(queue):
-                removed_song = queue.pop(index - 1)
-                await interaction.response.send_message(
-                    f'❌ Removed **{removed_song["title"]}** from the queue.',
-                    ephemeral=True)
-                await update_stable_message(guild_id)
-            else:
-                await interaction.response.send_message(
-                    '❌ Invalid song index.', ephemeral=True)
-        except ValueError:
-            await interaction.response.send_message(
-                '❌ Please enter a valid number.', ephemeral=True)
-        except Exception as e:
-            print(f"Error in RemoveSongModal: {e}")
-            await interaction.response.send_message(
-                '❌ An error occurred while removing the song.', ephemeral=True)
-
-# Create the AddSongModal class
-class AddSongModal(Modal):
-    def __init__(self):
-        super().__init__(title="Add Song")
-        self.song_input = TextInput(
-            label="Song Name or URL",
-            placeholder="Enter the song name or YouTube URL",
-            required=True,
-            max_length=100
-        )
-        self.add_item(self.song_input)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        user_input = self.song_input.value.strip()
-
-        # Defer the interaction
-        await interaction.response.defer(ephemeral=True)
-
-        # Check if the input is a URL
-        if 'list=' in user_input or 'watch?v=' in user_input or \
-                'youtu.be/' in user_input or 'youtube.com/' in user_input:
-            # It's a URL, proceed to add the song
-            await process_play_request(
-                interaction.user,
-                interaction.guild,
-                interaction.channel,
-                user_input,
-                interaction=interaction
-            )
-        else:
-            # It's a search query, get top 5 results
-            search_query = f"ytsearch5:{user_input}"
-            try:
-                search_results = ytdl.extract_info(
-                    search_query, download=False)['entries']
-                if not search_results:
-                    await interaction.followup.send("❌ No results found.",
-                                                    ephemeral=True)
-                    return
-
-                # Create a view with a Select menu
-                view = SongSelectionView(search_results)
-                message = await interaction.followup.send(
-                    "Select the song you want to add:", view=view,
-                    ephemeral=True)
-                view.message = message
-            except Exception as e:
-                msg = f"❌ Error searching for the song: {e}"
-                await interaction.followup.send(msg, ephemeral=True)
-
-# Create the SongSelectionView class
-class SongSelectionView(View):
-    def __init__(self, search_results):
-        super().__init__(timeout=60)
-        self.search_results = search_results
-        # Create options for the Select menu
-        options = [
-            discord.SelectOption(
-                label=entry.get('title', 'Unknown title')[:100],
-                description=entry.get('uploader', '')[:100],
-                value=str(index)
-            )
-            for index, entry in enumerate(search_results)
-        ]
-        self.add_item(SongSelect(options, self))
-        self.message = None  # Will be set when the view is sent
-
-    async def on_timeout(self):
-        # Disable the Select menu when the view times out
-        for child in self.children:
-            child.disabled = True
-        if self.message:
-            try:
-                await self.message.edit(view=self)
-            except discord.NotFound:
-                pass  # Message was deleted or not found
-
-class SongSelect(Select):
-    def __init__(self, options, parent_view):
-        super().__init__(placeholder="Choose a song...", min_values=1,
-                         max_values=1, options=options)
-        self.parent_view = parent_view
-
-    async def callback(self, interaction: discord.Interaction):
-        # Defer the interaction
-        await interaction.response.defer(ephemeral=True)
-
-        selected_index = int(self.values[0])
-        selected_song = self.parent_view.search_results[selected_index]
-        # Proceed to add the selected song
-        await process_play_request(
-            interaction.user,
-            interaction.guild,
-            interaction.channel,
-            selected_song['webpage_url'],
-            interaction=interaction
-        )
-        # Disable the Select menu after selection
-        self.parent_view.stop()
-        for child in self.parent_view.children:
-            child.disabled = True
-        try:
-            await self.parent_view.message.edit(view=self.parent_view)
-        except discord.NotFound:
-            pass  # The message was already edited or deleted
-
 # Create a function to format time
 def format_time(seconds):
     minutes = int(seconds) // 60
@@ -520,11 +365,10 @@ async def update_stable_message(guild_id):
     queue_embed.set_footer(text=f"Total songs in queue: {len(queue)}")
 
     # Create the MusicControlView
-    view = MusicControlView(queue)
+    view = MusicControlView()
 
     # Instructions for adding songs
-    content = "🎶 **Music Bot** 🎶\n\nUse the **Add Song** button or type " \
-              "`/play <song name or URL>` to add songs to the queue."
+    content = "🎶 **Music Bot** 🎶\n\nUse `/play <song name or URL>` to add songs to the queue."
 
     try:
         await stable_message.edit(content=content,
@@ -557,11 +401,6 @@ def cancel_disconnect_task(guild_id):
 # Play the next song in the queue
 async def play_next(guild_id):
     guild_id = str(guild_id)
-    # Cancel the progress updater task
-    progress_task = client.guilds_data[guild_id].get('progress_task')
-    if progress_task:
-        progress_task.cancel()
-        client.guilds_data[guild_id]['progress_task'] = None
 
     playback_mode = client.playback_modes.get(guild_id, PlaybackMode.NORMAL)
 
@@ -682,41 +521,62 @@ async def process_play_request(user, guild, channel, link, interaction=None,
     cancel_disconnect_task(guild_id)
 
     # Adjusted search handling using yt_dlp's built-in search
-    if 'list=' not in link and 'watch?v=' not in link and 'youtu.be/' not in \
-            link and 'youtube.com/' not in link:
-        # Treat as search query
-        search_query = f"ytsearch:{link}"
-        try:
-            data = ytdl.extract_info(search_query, download=False)['entries'][0]
-        except Exception as e:
-            msg = f"❌ Error searching for the song: {e}"
-            if interaction:
-                await interaction.followup.send(msg, ephemeral=True)
-            else:
-                sent_msg = await channel.send(msg)
-                # Schedule deletion
-                await asyncio.sleep(5)
-                await sent_msg.delete()
-            return
-    else:
-        # Extract audio and play
-        loop = asyncio.get_event_loop()
-        try:
-            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(
-                link, download=False))
-        except Exception as e:
-            msg = f"❌ Error extracting song information: {e}"
-            if interaction:
-                await interaction.followup.send(msg, ephemeral=True)
-            else:
-                sent_msg = await channel.send(msg)
-                # Schedule deletion
-                await asyncio.sleep(5)
-                await sent_msg.delete()
-            return
+    try:
+        data = await client.loop.run_in_executor(None, lambda: ytdl.extract_info(link, download=False))
+    except Exception as e:
+        msg = f"❌ Error extracting song information: {e}"
+        if interaction:
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            sent_msg = await channel.send(msg)
+            # Schedule deletion
+            await asyncio.sleep(5)
+            await sent_msg.delete()
+        return
 
-    # Handle single video
-    if 'entries' not in data:
+    if not data:
+        msg = "❌ No results found for your query."
+        if interaction:
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            sent_msg = await channel.send(msg)
+            await asyncio.sleep(5)
+            await sent_msg.delete()
+        return
+
+    # Handle single video or playlist
+    if 'entries' in data:
+        # Playlist detected
+        playlist_entries = data['entries']
+        added_songs = []
+        for entry in playlist_entries:
+            if entry is None:
+                continue  # Skip if entry is None
+            song_info = entry
+            song_info['requester'] = user.mention  # Add requester information
+            # Add to queue
+            if guild_id not in queues:
+                queues[guild_id] = []
+            if play_next:
+                queues[guild_id].insert(0, song_info)
+            else:
+                queues[guild_id].append(song_info)
+            added_songs.append(song_info['title'])
+        msg = f"🎶 Added playlist **{data.get('title', 'Unknown playlist')}** with " \
+              f"{len(added_songs)} songs to the queue."
+        if interaction:
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            sent_msg = await channel.send(msg)
+            # Schedule deletion
+            await asyncio.sleep(5)
+            await sent_msg.delete()
+
+        # Start playing if not already playing
+        if not voice_client.is_playing() and not voice_client.is_paused():
+            await play_next(guild_id)
+    else:
+        # Single video
         song_info = data
         song_info['requester'] = user.mention  # Add requester information
 
@@ -749,36 +609,6 @@ async def process_play_request(user, guild, channel, link, interaction=None,
                 # Schedule deletion
                 await asyncio.sleep(5)
                 await sent_msg.delete()
-    else:
-        # Playlist detected
-        playlist_entries = data['entries']
-        added_songs = []
-        for entry in playlist_entries:
-            if entry is None:
-                continue  # Skip if entry is None
-            song_info = entry
-            song_info['requester'] = user.mention  # Add requester information
-            # Add to queue
-            if guild_id not in queues:
-                queues[guild_id] = []
-            if play_next:
-                queues[guild_id].insert(0, song_info)
-            else:
-                queues[guild_id].append(song_info)
-            added_songs.append(song_info['title'])
-        msg = f"🎶 Added playlist **{data.get('title', 'Unknown playlist')}** with " \
-              f"{len(added_songs)} songs to the queue."
-        if interaction:
-            await interaction.followup.send(msg, ephemeral=True)
-        else:
-            sent_msg = await channel.send(msg)
-            # Schedule deletion
-            await asyncio.sleep(5)
-            await sent_msg.delete()
-
-        # Start playing if not already playing
-        if not voice_client.is_playing() and not voice_client.is_paused():
-            await play_next(guild_id)
 
     # Clear messages except the stable message
     guild_data = client.guilds_data.get(guild_id)
@@ -807,6 +637,20 @@ async def playnext_command(interaction: discord.Interaction, link: str):
     await process_play_request(interaction.user, interaction.guild,
                                interaction.channel, link, interaction=interaction,
                                play_next=True)
+
+# Slash command to remove a song from the queue
+@client.tree.command(name="remove", description="Remove a song from the queue")
+@app_commands.describe(index="The position of the song in the queue to remove")
+async def remove_command(interaction: discord.Interaction, index: int):
+    guild_id = str(interaction.guild.id)
+    queue = queues.get(guild_id)
+    if queue and 1 <= index <= len(queue):
+        removed_song = queue.pop(index - 1)
+        await interaction.response.send_message(
+            f'❌ Removed **{removed_song["title"]}** from the queue.', ephemeral=True)
+        await update_stable_message(guild_id)
+    else:
+        await interaction.response.send_message('❌ Invalid song index.', ephemeral=True)
 
 # Event handler for message deletion and processing song requests
 @client.event
