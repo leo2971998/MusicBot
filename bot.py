@@ -168,11 +168,12 @@ class MusicControlView(View):
         voice_client = voice_clients.get(guild_id)
         if voice_client and voice_client.is_playing():
             voice_client.pause()
-            await interaction.response.send_message('⏸️ Paused the music.', ephemeral=True)
+            await interaction.response.send_message('⏸️ Paused the music.')
         else:
-            await interaction.response.send_message('❌ Nothing is playing.', ephemeral=True)
+            await interaction.response.send_message('❌ Nothing is playing.')
         await update_stable_message(guild_id)
-        await clear_channel_messages(interaction.channel, client.guilds_data[guild_id]['stable_message_id'])
+        # Schedule deletion of the interaction response
+        await self.delete_interaction_message(interaction)
 
     @discord.ui.button(label='▶️ Resume', style=ButtonStyle.primary)
     async def resume_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -180,11 +181,12 @@ class MusicControlView(View):
         voice_client = voice_clients.get(guild_id)
         if voice_client and voice_client.is_paused():
             voice_client.resume()
-            await interaction.response.send_message('▶️ Resumed the music.', ephemeral=True)
+            await interaction.response.send_message('▶️ Resumed the music.')
         else:
-            await interaction.response.send_message('❌ Nothing is paused.', ephemeral=True)
+            await interaction.response.send_message('❌ Nothing is paused.')
         await update_stable_message(guild_id)
-        await clear_channel_messages(interaction.channel, client.guilds_data[guild_id]['stable_message_id'])
+        # Schedule deletion of the interaction response
+        await self.delete_interaction_message(interaction)
 
     @discord.ui.button(label='⏭️ Skip', style=ButtonStyle.primary)
     async def skip_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -192,19 +194,12 @@ class MusicControlView(View):
         voice_client = voice_clients.get(guild_id)
         if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
             voice_client.stop()
-
-            # Cancel the progress updater task
-            progress_task = client.guilds_data[guild_id].get('progress_task')
-            if progress_task:
-                progress_task.cancel()
-                client.guilds_data[guild_id]['progress_task'] = None
-
-            await interaction.response.send_message('⏭️ Skipped the song.', ephemeral=True)
-            # No need to call play_next here; it will be called automatically by after_playing
+            await interaction.response.send_message('⏭️ Skipped the song.')
         else:
-            await interaction.response.send_message('❌ Nothing is playing.', ephemeral=True)
+            await interaction.response.send_message('❌ Nothing is playing.')
         await update_stable_message(guild_id)
-        await clear_channel_messages(interaction.channel, client.guilds_data[guild_id]['stable_message_id'])
+        # Schedule deletion of the interaction response
+        await self.delete_interaction_message(interaction)
 
     @discord.ui.button(label='⏹️ Stop', style=ButtonStyle.primary)
     async def stop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -216,12 +211,6 @@ class MusicControlView(View):
             voice_clients.pop(guild_id, None)  # Safely remove the voice client
             client.guilds_data[guild_id]['current_song'] = None
 
-            # Cancel the progress updater task
-            progress_task = client.guilds_data[guild_id].get('progress_task')
-            if progress_task:
-                progress_task.cancel()
-                client.guilds_data[guild_id]['progress_task'] = None
-
             # Cancel the disconnect task if it exists
             disconnect_task = client.guilds_data[guild_id].get('disconnect_task')
             if disconnect_task:
@@ -231,47 +220,52 @@ class MusicControlView(View):
             # Reset playback mode to NORMAL
             client.playback_modes[guild_id] = PlaybackMode.NORMAL
 
-            await interaction.response.send_message('⏹️ Stopped the music and left the voice channel.', ephemeral=True)
+            await interaction.response.send_message('⏹️ Stopped the music and left the voice channel.')
         else:
-            await interaction.response.send_message('❌ Not connected to a voice channel.', ephemeral=True)
+            await interaction.response.send_message('❌ Not connected to a voice channel.')
         await update_stable_message(guild_id)
-        await clear_channel_messages(interaction.channel, client.guilds_data[guild_id]['stable_message_id'])
+        # Schedule deletion of the interaction response
+        await self.delete_interaction_message(interaction)
 
     @discord.ui.button(label='🗑️ Clear Queue', style=ButtonStyle.danger)
     async def clear_queue_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         guild_id = str(interaction.guild.id)
         if guild_id in queues:
             queues[guild_id].clear()
-            await interaction.response.send_message('🗑️ Cleared the queue.', ephemeral=True)
+            await interaction.response.send_message('🗑️ Cleared the queue.')
         else:
-            await interaction.response.send_message('❌ The queue is already empty.', ephemeral=True)
+            await interaction.response.send_message('❌ The queue is already empty.')
         await update_stable_message(guild_id)
-        await clear_channel_messages(interaction.channel, client.guilds_data[guild_id]['stable_message_id'])
+        # Schedule deletion of the interaction response
+        await self.delete_interaction_message(interaction)
 
     # Separate buttons for playback modes
     @discord.ui.button(label='🔁 Normal', style=ButtonStyle.secondary)
     async def normal_mode_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         guild_id = str(interaction.guild.id)
         client.playback_modes[guild_id] = PlaybackMode.NORMAL
-        await interaction.response.send_message('Playback mode set to: **Normal**', ephemeral=True)
+        await interaction.response.send_message('Playback mode set to: **Normal**')
         await update_stable_message(guild_id)
-        await clear_channel_messages(interaction.channel, client.guilds_data[guild_id]['stable_message_id'])
+        # Schedule deletion of the interaction response
+        await self.delete_interaction_message(interaction)
 
     @discord.ui.button(label='🔂 Repeat One', style=ButtonStyle.secondary)
     async def repeat_one_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         guild_id = str(interaction.guild.id)
         client.playback_modes[guild_id] = PlaybackMode.REPEAT_ONE
-        await interaction.response.send_message('Playback mode set to: **Repeat One**', ephemeral=True)
+        await interaction.response.send_message('Playback mode set to: **Repeat One**')
         await update_stable_message(guild_id)
-        await clear_channel_messages(interaction.channel, client.guilds_data[guild_id]['stable_message_id'])
+        # Schedule deletion of the interaction response
+        await self.delete_interaction_message(interaction)
 
     @discord.ui.button(label='🔁 Repeat All', style=ButtonStyle.secondary)
     async def repeat_all_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         guild_id = str(interaction.guild.id)
         client.playback_modes[guild_id] = PlaybackMode.REPEAT_ALL
-        await interaction.response.send_message('Playback mode set to: **Repeat All**', ephemeral=True)
+        await interaction.response.send_message('Playback mode set to: **Repeat All**')
         await update_stable_message(guild_id)
-        await clear_channel_messages(interaction.channel, client.guilds_data[guild_id]['stable_message_id'])
+        # Schedule deletion of the interaction response
+        await self.delete_interaction_message(interaction)
 
     @discord.ui.button(label='🔀 Shuffle', style=ButtonStyle.primary)
     async def shuffle_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -279,11 +273,12 @@ class MusicControlView(View):
         queue = queues.get(guild_id)
         if queue:
             random.shuffle(queue)
-            await interaction.response.send_message('🔀 Queue shuffled.', ephemeral=True)
+            await interaction.response.send_message('🔀 Queue shuffled.')
         else:
-            await interaction.response.send_message('❌ The queue is empty.', ephemeral=True)
+            await interaction.response.send_message('❌ The queue is empty.')
         await update_stable_message(guild_id)
-        await clear_channel_messages(interaction.channel, client.guilds_data[guild_id]['stable_message_id'])
+        # Schedule deletion of the interaction response
+        await self.delete_interaction_message(interaction)
 
     @discord.ui.button(label='➕ Add Song', style=ButtonStyle.success)
     async def add_song_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -335,6 +330,20 @@ class MusicControlView(View):
         except ValueError:
             await interaction.followup.send('❌ Please enter a valid number.', ephemeral=True)
 
+    # Helper method to delete interaction messages
+    async def delete_interaction_message(self, interaction):
+        try:
+            # Defer the interaction if not already responded
+            if not interaction.response.is_done():
+                await interaction.response.defer()
+            # Fetch the interaction message
+            message = await interaction.original_response()
+            # Delete the message after a short delay
+            await asyncio.sleep(5)  # Wait 5 seconds before deleting
+            await message.delete()
+        except Exception as e:
+            print(f"Error deleting interaction message: {e}")
+
 # Create a function to format time
 def format_time(seconds):
     minutes = int(seconds) // 60
@@ -366,6 +375,8 @@ async def update_stable_message(guild_id):
         )
         now_playing_embed.set_thumbnail(url=current_song.get('thumbnail'))
         now_playing_embed.add_field(name='Duration', value=f"`{duration_str}`", inline=False)
+        # Add requester
+        now_playing_embed.add_field(name='Requested by', value=current_song.get('requester', 'Unknown'), inline=False)
 
         # Add playback mode to the embed
         playback_mode = client.playback_modes.get(guild_id, PlaybackMode.NORMAL).name.replace('_', ' ').title()
@@ -380,7 +391,7 @@ async def update_stable_message(guild_id):
     # Queue Embed
     if queue:
         queue_description = '\n'.join(
-            [f"{idx + 1}. **[{song['title']}]({song['webpage_url']})**" for idx, song in enumerate(queue)]
+            [f"{idx + 1}. **[{song['title']}]({song['webpage_url']})** — *{song.get('requester', 'Unknown')}*" for idx, song in enumerate(queue)]
         )
     else:
         queue_description = 'No songs in the queue.'
@@ -404,7 +415,7 @@ async def update_stable_message(guild_id):
 # Clear messages in the channel except the stable message
 async def clear_channel_messages(channel, stable_message_id):
     async for message in channel.history(limit=100):
-        if message.id != stable_message_id and message.type == discord.MessageType.default:
+        if message.id != stable_message_id and not message.pinned:
             try:
                 await message.delete()
             except discord.Forbidden:
@@ -502,11 +513,6 @@ async def play_song(guild_id, song_info):
     # Record the song duration
     client.guilds_data[guild_id]['song_duration'] = song_info.get('duration', 0)
 
-    # Reset playback mode to NORMAL when starting to play
-    # Commented out to retain selected mode
-    # if client.playback_modes.get(guild_id) != PlaybackMode.REPEAT_ONE:
-    #     client.playback_modes[guild_id] = PlaybackMode.NORMAL
-
     await update_stable_message(guild_id)
     save_guilds_data()
 
@@ -524,9 +530,13 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
     if not user_voice_channel:
         msg = "❌ You are not connected to a voice channel."
         if interaction:
-            await interaction.followup.send(msg, ephemeral=True)
+            await interaction.followup.send(msg)
+            await delete_interaction_message(interaction)
         else:
-            await channel.send(msg)
+            sent_msg = await channel.send(msg)
+            # Schedule deletion
+            await asyncio.sleep(5)
+            await sent_msg.delete()
         return
 
     if voice_client:
@@ -550,9 +560,13 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
         except Exception as e:
             msg = f"❌ Error searching for the song: {e}"
             if interaction:
-                await interaction.followup.send(msg, ephemeral=True)
+                await interaction.followup.send(msg)
+                await delete_interaction_message(interaction)
             else:
-                await channel.send(msg)
+                sent_msg = await channel.send(msg)
+                # Schedule deletion
+                await asyncio.sleep(5)
+                await sent_msg.delete()
             return
     else:
         # Extract audio and play
@@ -562,14 +576,19 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
         except Exception as e:
             msg = f"❌ Error extracting song information: {e}"
             if interaction:
-                await interaction.followup.send(msg, ephemeral=True)
+                await interaction.followup.send(msg)
+                await delete_interaction_message(interaction)
             else:
-                await channel.send(msg)
+                sent_msg = await channel.send(msg)
+                # Schedule deletion
+                await asyncio.sleep(5)
+                await sent_msg.delete()
             return
 
     # Handle single video
     if 'entries' not in data:
-        song_info = data  # Store the entire data for later use
+        song_info = data
+        song_info['requester'] = user.mention  # Add requester information
 
         # Add to queue
         if guild_id not in queues:
@@ -586,14 +605,22 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
             msg = f"🎶 Now playing: **{song_info.get('title', 'Unknown title')}**"
             if interaction:
                 await interaction.followup.send(msg)
+                await delete_interaction_message(interaction)
             else:
-                await channel.send(msg)
+                sent_msg = await channel.send(msg)
+                # Schedule deletion
+                await asyncio.sleep(5)
+                await sent_msg.delete()
         else:
             msg = f"➕ Added to queue: **{song_info.get('title', 'Unknown title')}**"
             if interaction:
                 await interaction.followup.send(msg)
+                await delete_interaction_message(interaction)
             else:
-                await channel.send(msg)
+                sent_msg = await channel.send(msg)
+                # Schedule deletion
+                await asyncio.sleep(5)
+                await sent_msg.delete()
     else:
         # Playlist detected
         playlist_entries = data['entries']
@@ -601,7 +628,8 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
         for entry in playlist_entries:
             if entry is None:
                 continue  # Skip if entry is None
-            song_info = entry  # Use the entry directly
+            song_info = entry
+            song_info['requester'] = user.mention  # Add requester information
             # Add to queue
             if guild_id not in queues:
                 queues[guild_id] = []
@@ -613,8 +641,12 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
         msg = f"🎶 Added playlist **{data.get('title', 'Unknown playlist')}** with {len(added_songs)} songs to the queue."
         if interaction:
             await interaction.followup.send(msg)
+            await delete_interaction_message(interaction)
         else:
-            await channel.send(msg)
+            sent_msg = await channel.send(msg)
+            # Schedule deletion
+            await asyncio.sleep(5)
+            await sent_msg.delete()
 
         # Start playing if not already playing
         if not voice_client.is_playing() and not voice_client.is_paused():
@@ -631,35 +663,34 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
 
     await update_stable_message(guild_id)
 
+# Helper function to delete interaction messages
+async def delete_interaction_message(interaction):
+    try:
+        # Fetch the interaction message
+        message = await interaction.original_response()
+        # Delete the message after a short delay
+        await asyncio.sleep(5)  # Wait 5 seconds before deleting
+        await message.delete()
+    except Exception as e:
+        print(f"Error deleting interaction message: {e}")
+
 # Slash command to play a song or add to the queue
 @client.tree.command(name="play", description="Play a song or add it to the queue")
 @discord.app_commands.describe(link="The URL or name of the song to play")
 async def play_command(interaction: discord.Interaction, link: str):
-    await interaction.response.defer(ephemeral=False)
+    await interaction.response.defer()
     await process_play_request(interaction.user, interaction.guild, interaction.channel, link, interaction=interaction)
-    # Clear other messages
-    guild_data = client.guilds_data.get(str(interaction.guild.id))
-    if guild_data:
-        stable_message_id = guild_data.get('stable_message_id')
-        channel_id = guild_data.get('channel_id')
-        if stable_message_id and channel_id:
-            channel = client.get_channel(int(channel_id))
-            await clear_channel_messages(channel, int(stable_message_id))
+    # Schedule deletion of the interaction response
+    await delete_interaction_message(interaction)
 
 # Slash command to play a song next
 @client.tree.command(name="playnext", description="Play a song next")
 @discord.app_commands.describe(link="The URL or name of the song to play next")
 async def playnext_command(interaction: discord.Interaction, link: str):
-    await interaction.response.defer(ephemeral=False)
+    await interaction.response.defer()
     await process_play_request(interaction.user, interaction.guild, interaction.channel, link, interaction=interaction, play_next=True)
-    # Clear other messages
-    guild_data = client.guilds_data.get(str(interaction.guild.id))
-    if guild_data:
-        stable_message_id = guild_data.get('stable_message_id')
-        channel_id = guild_data.get('channel_id')
-        if stable_message_id and channel_id:
-            channel = client.get_channel(int(channel_id))
-            await clear_channel_messages(channel, int(stable_message_id))
+    # Schedule deletion of the interaction response
+    await delete_interaction_message(interaction)
 
 # Event handler for message deletion and processing song requests
 @client.event
