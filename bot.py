@@ -1,13 +1,12 @@
 import discord
 from discord.ext import commands
-from discord.ui import Button, View
+from discord.ui import Button, View, Modal, TextInput
 from discord import Embed, ButtonStyle
 import os
 import asyncio
 import yt_dlp
 from dotenv import load_dotenv
 import json
-import time
 import random
 from enum import Enum
 
@@ -36,7 +35,6 @@ client.playback_modes = {}
 queues = {}
 voice_clients = {}
 youtube_base_url = 'https://www.youtube.com/'
-youtube_results_url = youtube_base_url + 'results?'
 youtube_watch_url = youtube_base_url + 'watch?v='
 
 # Adjusted yt_dlp options
@@ -300,42 +298,15 @@ class MusicControlView(View):
         except asyncio.TimeoutError:
             await interaction.followup.send('❌ You took too long to respond.', ephemeral=True)
 
+    # Update Remove button to use Modal
     @discord.ui.button(label='❌ Remove', style=ButtonStyle.danger)
     async def remove_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message('Please enter the number of the song to remove:', ephemeral=True)
-
-        def check(m):
-            return m.author == interaction.user and m.channel == interaction.channel
-
-        try:
-            msg = await client.wait_for('message', timeout=30.0, check=check)
-            index = int(msg.content.strip())
-            guild_id = str(interaction.guild.id)
-            queue = queues.get(guild_id)
-            if queue and 1 <= index <= len(queue):
-                removed_song = queue.pop(index - 1)
-                await interaction.followup.send(f'❌ Removed **{removed_song["title"]}** from the queue.', ephemeral=True)
-                await update_stable_message(guild_id)
-            else:
-                await interaction.followup.send('❌ Invalid song index.', ephemeral=True)
-            # Delete the user's message after processing
-            try:
-                await msg.delete()
-            except:
-                pass
-            # Clear other messages
-            await clear_channel_messages(interaction.channel, client.guilds_data[guild_id]['stable_message_id'])
-        except asyncio.TimeoutError:
-            await interaction.followup.send('❌ You took too long to respond.', ephemeral=True)
-        except ValueError:
-            await interaction.followup.send('❌ Please enter a valid number.', ephemeral=True)
+        modal = RemoveSongModal(interaction)
+        await interaction.response.send_modal(modal)
 
     # Helper method to delete interaction messages
     async def delete_interaction_message(self, interaction):
         try:
-            # Defer the interaction if not already responded
-            if not interaction.response.is_done():
-                await interaction.response.defer()
             # Fetch the interaction message
             message = await interaction.original_response()
             # Delete the message after a short delay
@@ -343,6 +314,33 @@ class MusicControlView(View):
             await message.delete()
         except Exception as e:
             print(f"Error deleting interaction message: {e}")
+
+# Create the RemoveSongModal class
+class RemoveSongModal(Modal):
+    def __init__(self, interaction: discord.Interaction):
+        super().__init__(title="Remove Song")
+        self.interaction = interaction
+        self.song_index = TextInput(
+            label="Song Index",
+            placeholder="Enter the number of the song to remove",
+            required=True
+        )
+        self.add_item(self.song_index)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        index = self.song_index.value.strip()
+        guild_id = str(interaction.guild.id)
+        queue = queues.get(guild_id)
+        try:
+            index = int(index)
+            if queue and 1 <= index <= len(queue):
+                removed_song = queue.pop(index - 1)
+                await interaction.response.send_message(f'❌ Removed **{removed_song["title"]}** from the queue.', ephemeral=True)
+                await update_stable_message(guild_id)
+            else:
+                await interaction.response.send_message('❌ Invalid song index.', ephemeral=True)
+        except ValueError:
+            await interaction.response.send_message('❌ Please enter a valid number.', ephemeral=True)
 
 # Create a function to format time
 def format_time(seconds):
@@ -710,6 +708,7 @@ async def on_message(message):
                 print(f"Permission error: Cannot delete message {message.id}")
             except discord.HTTPException as e:
                 print(f"Failed to delete message {message.id}: {e}")
+
             # Treat the message content as a song request
             await process_play_request(message.author, message.guild, message.channel, message.content)
         else:
