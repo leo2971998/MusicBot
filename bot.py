@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
-from discord.ui import Button, View, Modal, TextInput
-from discord import Embed, ButtonStyle, app_commands
+from discord.ui import Button, View, Modal, TextInput, Select
+from discord import Embed, ButtonStyle
 import os
 import asyncio
 import yt_dlp
@@ -278,15 +278,17 @@ class MusicControlView(View):
         # Schedule deletion of the interaction response
         await self.delete_interaction_message(interaction)
 
-    # Remove the Add Song button since we're using slash commands with autocomplete
+    # Update Add Song button to use Modal
+    @discord.ui.button(label='➕ Add Song', style=ButtonStyle.success)
+    async def add_song_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = AddSongModal()
+        await interaction.response.send_modal(modal)
+
     # Update Remove button to use Modal
     @discord.ui.button(label='❌ Remove', style=ButtonStyle.danger)
     async def remove_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            modal = RemoveSongModal(interaction)
-            await interaction.response.send_modal(modal)
-        except discord.errors.NotFound:
-            await interaction.followup.send("❌ Interaction expired. Please try again.", ephemeral=True)
+        modal = RemoveSongModal()
+        await interaction.response.send_modal(modal)
 
     # Helper method to delete interaction messages
     async def delete_interaction_message(self, interaction):
@@ -296,14 +298,16 @@ class MusicControlView(View):
             # Delete the message after a short delay
             await asyncio.sleep(5)  # Wait 5 seconds before deleting
             await message.delete()
+        except discord.NotFound:
+            # Message was already deleted or not found
+            pass
         except Exception as e:
             print(f"Error deleting interaction message: {e}")
 
 # Create the RemoveSongModal class
 class RemoveSongModal(Modal):
-    def __init__(self, interaction: discord.Interaction):
+    def __init__(self):
         super().__init__(title="Remove Song")
-        self.interaction = interaction
         self.song_index = TextInput(
             label="Song Index",
             placeholder="Enter the number of the song to remove",
@@ -325,8 +329,102 @@ class RemoveSongModal(Modal):
                 await interaction.response.send_message('❌ Invalid song index.', ephemeral=True)
         except ValueError:
             await interaction.response.send_message('❌ Please enter a valid number.', ephemeral=True)
-        except discord.errors.NotFound:
-            await interaction.followup.send("❌ Interaction expired. Please try again.", ephemeral=True)
+        except Exception as e:
+            print(f"Error in RemoveSongModal: {e}")
+            await interaction.response.send_message('❌ An error occurred while removing the song.', ephemeral=True)
+
+# Create the AddSongModal class
+class AddSongModal(Modal):
+    def __init__(self):
+        super().__init__(title="Add Song")
+        self.song_input = TextInput(
+            label="Song Name or URL",
+            placeholder="Enter the song name or YouTube URL",
+            required=True,
+            max_length=100
+        )
+        self.add_item(self.song_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        user_input = self.song_input.value.strip()
+
+        # Defer the interaction
+        await interaction.response.defer(ephemeral=True)
+
+        # Check if the input is a URL
+        if 'list=' in user_input or 'watch?v=' in user_input or 'youtu.be/' in user_input or 'youtube.com/' in user_input:
+            # It's a URL, proceed to add the song
+            await process_play_request(
+                interaction.user,
+                interaction.guild,
+                interaction.channel,
+                user_input,
+                interaction=interaction
+            )
+        else:
+            # It's a search query, get top 5 results
+            search_query = f"ytsearch5:{user_input}"
+            try:
+                search_results = ytdl.extract_info(search_query, download=False)['entries']
+                if not search_results:
+                    await interaction.followup.send("❌ No results found.", ephemeral=True)
+                    return
+
+                # Create a view with a Select menu
+                view = SongSelectionView(search_results)
+                await interaction.followup.send("Select the song you want to add:", view=view, ephemeral=True)
+            except Exception as e:
+                msg = f"❌ Error searching for the song: {e}"
+                await interaction.followup.send(msg, ephemeral=True)
+
+# Create the SongSelectionView class
+class SongSelectionView(View):
+    def __init__(self, search_results):
+        super().__init__(timeout=60)
+        self.search_results = search_results
+        # Create options for the Select menu
+        options = [
+            discord.SelectOption(
+                label=entry.get('title', 'Unknown title')[:100],
+                description=entry.get('uploader', '')[:100],
+                value=str(index)
+            )
+            for index, entry in enumerate(search_results)
+        ]
+        self.add_item(SongSelect(options, self))
+
+    async def on_timeout(self):
+        # Disable the Select menu when the view times out
+        for child in self.children:
+            child.disabled = True
+        await self.message.edit(view=self)
+
+class SongSelect(Select):
+    def __init__(self, options, parent_view):
+        super().__init__(placeholder="Choose a song...", min_values=1, max_values=1, options=options)
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_index = int(self.values[0])
+        selected_song = self.parent_view.search_results[selected_index]
+        # Proceed to add the selected song
+        await process_play_request(
+            interaction.user,
+            interaction.guild,
+            interaction.channel,
+            selected_song['webpage_url'],
+            interaction=interaction
+        )
+        # Disable the Select menu after selection
+        self.parent_view.stop()
+        for child in self.parent_view.children:
+            child.disabled = True
+        try:
+            await interaction.response.edit_message(view=self.parent_view)
+        except discord.NotFound:
+            pass  # The message was already edited or deleted
+        # Optionally delete the interaction message after a delay
+        await delete_interaction_message(interaction)
 
 # Create a function to format time
 def format_time(seconds):
@@ -515,7 +613,6 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
         msg = "❌ You are not connected to a voice channel."
         if interaction:
             await interaction.followup.send(msg, ephemeral=True)
-            await delete_interaction_message(interaction)
         else:
             sent_msg = await channel.send(msg)
             # Schedule deletion
@@ -535,15 +632,8 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
     # Cancel any scheduled disconnect task
     cancel_disconnect_task(guild_id)
 
-    # Adjusted search handling
-    is_url = 'list=' in link or 'watch?v=' in link or 'youtu.be/' in link or 'youtube.com/' in link
-
-    if not is_url:
-        # The input might be a title from the autocomplete, but check if it's a URL
-        if link.startswith('http'):
-            is_url = True
-
-    if not is_url:
+    # Adjusted search handling using yt_dlp's built-in search
+    if 'list=' not in link and 'watch?v=' not in link and 'youtu.be/' not in link and 'youtube.com/' not in link:
         # Treat as search query
         search_query = f"ytsearch:{link}"
         try:
@@ -552,7 +642,6 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
             msg = f"❌ Error searching for the song: {e}"
             if interaction:
                 await interaction.followup.send(msg, ephemeral=True)
-                await delete_interaction_message(interaction)
             else:
                 sent_msg = await channel.send(msg)
                 # Schedule deletion
@@ -568,7 +657,6 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
             msg = f"❌ Error extracting song information: {e}"
             if interaction:
                 await interaction.followup.send(msg, ephemeral=True)
-                await delete_interaction_message(interaction)
             else:
                 sent_msg = await channel.send(msg)
                 # Schedule deletion
@@ -596,7 +684,6 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
             msg = f"🎶 Now playing: **{song_info.get('title', 'Unknown title')}**"
             if interaction:
                 await interaction.followup.send(msg, ephemeral=True)
-                await delete_interaction_message(interaction)
             else:
                 sent_msg = await channel.send(msg)
                 # Schedule deletion
@@ -606,7 +693,6 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
             msg = f"➕ Added to queue: **{song_info.get('title', 'Unknown title')}**"
             if interaction:
                 await interaction.followup.send(msg, ephemeral=True)
-                await delete_interaction_message(interaction)
             else:
                 sent_msg = await channel.send(msg)
                 # Schedule deletion
@@ -632,7 +718,6 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
         msg = f"🎶 Added playlist **{data.get('title', 'Unknown playlist')}** with {len(added_songs)} songs to the queue."
         if interaction:
             await interaction.followup.send(msg, ephemeral=True)
-            await delete_interaction_message(interaction)
         else:
             sent_msg = await channel.send(msg)
             # Schedule deletion
@@ -662,44 +747,27 @@ async def delete_interaction_message(interaction):
         # Delete the message after a short delay
         await asyncio.sleep(5)  # Wait 5 seconds before deleting
         await message.delete()
+    except discord.NotFound:
+        # Message was already deleted or not found
+        pass
     except Exception as e:
         print(f"Error deleting interaction message: {e}")
 
-# Autocomplete function for the /play command
-async def song_search_autocomplete(interaction: discord.Interaction, current: str):
-    if not current:
-        return []
-    # Use yt_dlp to search for songs matching 'current'
-    search_query = f"ytsearch5:{current}"
-    try:
-        search_results = ytdl.extract_info(search_query, download=False)['entries']
-        if not search_results:
-            return []
-        return [
-            app_commands.Choice(name=entry.get('title', 'Unknown title')[:100], value=entry['webpage_url'])
-            for entry in search_results
-        ]
-    except Exception as e:
-        print(f"Error during autocomplete: {e}")
-        return []
-
 # Slash command to play a song or add to the queue
 @client.tree.command(name="play", description="Play a song or add it to the queue")
-@app_commands.describe(query="The name or URL of the song to play")
-@app_commands.autocomplete(query=song_search_autocomplete)
-async def play_command(interaction: discord.Interaction, query: str):
+@discord.app_commands.describe(link="The URL or name of the song to play")
+async def play_command(interaction: discord.Interaction, link: str):
     await interaction.response.defer(ephemeral=True)
-    await process_play_request(interaction.user, interaction.guild, interaction.channel, query, interaction=interaction)
+    await process_play_request(interaction.user, interaction.guild, interaction.channel, link, interaction=interaction)
     # Schedule deletion of the interaction response
     await delete_interaction_message(interaction)
 
 # Slash command to play a song next
 @client.tree.command(name="playnext", description="Play a song next")
-@app_commands.describe(query="The name or URL of the song to play next")
-@app_commands.autocomplete(query=song_search_autocomplete)
-async def playnext_command(interaction: discord.Interaction, query: str):
+@discord.app_commands.describe(link="The URL or name of the song to play next")
+async def playnext_command(interaction: discord.Interaction, link: str):
     await interaction.response.defer(ephemeral=True)
-    await process_play_request(interaction.user, interaction.guild, interaction.channel, query, interaction=interaction, play_next=True)
+    await process_play_request(interaction.user, interaction.guild, interaction.channel, link, interaction=interaction, play_next=True)
     # Schedule deletion of the interaction response
     await delete_interaction_message(interaction)
 
