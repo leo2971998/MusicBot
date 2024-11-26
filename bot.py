@@ -634,8 +634,9 @@ async def play_song(guild_id, song_info):
     )
     channel_id = client.guilds_data[guild_id]['channel_id']
     channel = client.get_channel(int(channel_id))
-    await channel.send(f"🎶 Now playing: **{song_info.get('title', 'Unknown "
-                       f"title')}**")
+    await channel.send(
+        f"🎶 Now playing: **{song_info.get('title', 'Unknown title')}**"
+    )
     client.guilds_data[guild_id]['current_song'] = song_info
 
     # Record the song duration
