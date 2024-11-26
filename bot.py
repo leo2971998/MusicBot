@@ -189,7 +189,7 @@ class MusicControlView(View):
         self.add_item(Button(label='🔁 Repeat All', style=ButtonStyle.secondary, custom_id='repeat_all'))
         # Add Song button
         self.add_item(Button(label='➕ Add Song', style=ButtonStyle.success, custom_id='add_song'))
-        # Add the select menu (initially disabled)
+        # Add the select menu (initially with placeholder)
         self.song_select = SongSelect(self)
         self.add_item(self.song_select)
 
@@ -351,9 +351,21 @@ class AddSongModal(Modal):
 
 class SongSelect(Select):
     def __init__(self, parent_view):
-        super().__init__(placeholder="No search results yet. Click 'Add Song' to search.",
-                         min_values=1, max_values=1, options=[], disabled=True)
         self.parent_view = parent_view
+        # Create a placeholder option
+        placeholder_option = discord.SelectOption(
+            label="No search results yet.",
+            description="Click 'Add Song' to search.",
+            value="placeholder",
+            default=True
+        )
+        super().__init__(
+            placeholder="No search results yet. Click 'Add Song' to search.",
+            min_values=1,
+            max_values=1,
+            options=[placeholder_option],
+            disabled=True
+        )
 
     def update_options(self, search_results):
         self.options = [
@@ -366,9 +378,17 @@ class SongSelect(Select):
         ]
         self.disabled = False
         self.placeholder = "Select a song..."
+        # Clear default selections
+        for option in self.options:
+            option.default = False
+        # Update the select menu in the parent view
+        self.parent_view.remove_item(self)
         self.parent_view.add_item(self)
 
     async def callback(self, interaction: discord.Interaction):
+        if self.values[0] == "placeholder":
+            await interaction.response.defer()
+            return
         selected_index = int(self.values[0])
         selected_song = self.parent_view.search_results[selected_index]
         # Proceed to add the selected song
@@ -380,13 +400,26 @@ class SongSelect(Select):
             interaction=interaction
         )
         # Reset the select menu
-        self.options = []
-        self.disabled = True
-        self.placeholder = "No search results yet. Click 'Add Song' to search."
-        self.parent_view.search_results = []
+        self.reset()
         guild_id = str(interaction.guild.id)
         await update_stable_message(guild_id, view=self.parent_view)
         await interaction.response.defer()  # Acknowledge the interaction silently
+
+    def reset(self):
+        # Reset the select menu to initial state
+        placeholder_option = discord.SelectOption(
+            label="No search results yet.",
+            description="Click 'Add Song' to search.",
+            value="placeholder",
+            default=True
+        )
+        self.options = [placeholder_option]
+        self.disabled = True
+        self.placeholder = "No search results yet. Click 'Add Song' to search."
+        self.parent_view.search_results = []
+        # Update the select menu in the parent view
+        self.parent_view.remove_item(self)
+        self.parent_view.add_item(self)
 
 # Create a function to format time
 def format_time(seconds):
@@ -461,7 +494,7 @@ async def update_stable_message(guild_id, view=None):
     try:
         await stable_message.edit(content='', embeds=[now_playing_embed, queue_embed], view=view)
     except discord.errors.HTTPException as e:
-        print(f"Rate limit hit when updating message in guild {guild_id}: {e}")
+        print(f"Error when updating message in guild {guild_id}: {e}")
 
     save_guilds_data()
 
