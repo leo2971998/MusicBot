@@ -689,9 +689,7 @@ class MusicControlView(View):
         self.add_controls()
 
     def add_controls(self):
-        # Clear existing items
         self.clear_items()
-        # Add control buttons
         self.add_item(ControlButton('⏸️ Pause', ButtonStyle.primary, 'pause', self))
         self.add_item(ControlButton('▶️ Resume', ButtonStyle.primary, 'resume', self))
         self.add_item(ControlButton('⏭️ Skip', ButtonStyle.primary, 'skip', self))
@@ -704,7 +702,7 @@ class MusicControlView(View):
         self.add_item(ControlButton('🔁 Repeat All', ButtonStyle.secondary, 'repeat_all', self))
         # Add Song button
         self.add_item(ControlButton('➕ Add Song', ButtonStyle.success, 'add_song', self))
-        # Add the select menu (initially with placeholder)
+        # Add the select menu
         self.song_select = SongSelect(self)
         self.add_item(self.song_select)
 
@@ -830,12 +828,12 @@ class MusicControlView(View):
 
 # Custom button class
 class ControlButton(Button):
-    def __init__(self, label, style, custom_id, view):
+    def __init__(self, label, style, custom_id, parent_view):
         super().__init__(label=label, style=style, custom_id=custom_id)
-        self.view = view
+        self.parent_view = parent_view  # Store parent view
 
     async def callback(self, interaction: discord.Interaction):
-        await self.view.on_button_click(interaction, self.custom_id)
+        await self.parent_view.on_button_click(interaction, self.custom_id)
 
 # Modal to add song
 class AddSongModal(Modal):
