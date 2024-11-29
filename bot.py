@@ -10,6 +10,7 @@ import urllib.parse, urllib.request, re
 import json
 import time
 import random
+from yt_dlp.utils import DownloadError, ExtractorError
 
 # Load the environment variables
 load_dotenv()
@@ -67,7 +68,6 @@ def save_guilds_data():
         data_to_save = guild_data.copy()
         # Exclude non-serializable items
         data_to_save.pop('stable_message', None)
-        data_to_save.pop('progress_task', None)
         data_to_save.pop('disconnect_task', None)
         serializable_data[guild_id] = data_to_save
     data = {
@@ -181,13 +181,6 @@ class MusicControlView(View):
         voice_client = voice_clients.get(guild_id)
         if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
             voice_client.stop()
-
-            # Cancel the progress updater task
-            progress_task = client.guilds_data[guild_id].get('progress_task')
-            if progress_task:
-                progress_task.cancel()
-                client.guilds_data[guild_id]['progress_task'] = None
-
             await interaction.response.send_message('⏭️ Skipped the song.', ephemeral=True)
             # No need to call play_next here; it will be called automatically by after_playing
         else:
@@ -204,12 +197,6 @@ class MusicControlView(View):
             await voice_client.disconnect()
             voice_clients.pop(guild_id, None)  # Safely remove the voice client
             client.guilds_data[guild_id]['current_song'] = None
-
-            # Cancel the progress updater task
-            progress_task = client.guilds_data[guild_id].get('progress_task')
-            if progress_task:
-                progress_task.cancel()
-                client.guilds_data[guild_id]['progress_task'] = None
 
             # Cancel the disconnect task if it exists
             disconnect_task = client.guilds_data[guild_id].get('disconnect_task')
@@ -231,7 +218,7 @@ class MusicControlView(View):
         guild_id = str(interaction.guild.id)
         if guild_id in queues:
             queues[guild_id].clear()
-            client.guilds_data[guild_id]['original_queue'] = []
+            client.guilds_data[guild_id]['saved_queue'] = []
             await interaction.response.send_message('🗑️ Cleared the queue.', ephemeral=True)
         else:
             await interaction.response.send_message('❌ The queue is already empty.', ephemeral=True)
@@ -242,12 +229,17 @@ class MusicControlView(View):
     async def repeat_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         guild_id = str(interaction.guild.id)
         current_mode = client.playback_modes.get(guild_id, PLAYBACK_MODES['NORMAL'])
+
         if current_mode == PLAYBACK_MODES['REPEAT']:
             client.playback_modes[guild_id] = PLAYBACK_MODES['NORMAL']
             await interaction.response.send_message('🔂 Repeat mode disabled.', ephemeral=True)
         else:
+            # Disable loop mode if it's active
+            if current_mode == PLAYBACK_MODES['LOOP']:
+                client.playback_modes[guild_id] = PLAYBACK_MODES['NORMAL']
             client.playback_modes[guild_id] = PLAYBACK_MODES['REPEAT']
             await interaction.response.send_message('🔂 Repeat mode enabled.', ephemeral=True)
+
         await update_stable_message(guild_id)
         await clear_channel_messages(interaction.channel, client.guilds_data[guild_id]['stable_message_id'])
 
@@ -255,12 +247,23 @@ class MusicControlView(View):
     async def loop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         guild_id = str(interaction.guild.id)
         current_mode = client.playback_modes.get(guild_id, PLAYBACK_MODES['NORMAL'])
+
         if current_mode == PLAYBACK_MODES['LOOP']:
             client.playback_modes[guild_id] = PLAYBACK_MODES['NORMAL']
+            # Restore original queue if it exists
+            if 'saved_queue' in client.guilds_data[guild_id]:
+                queues[guild_id] = client.guilds_data[guild_id]['saved_queue'].copy()
             await interaction.response.send_message('🔁 Loop mode disabled.', ephemeral=True)
         else:
+            # Disable repeat mode if it's active
+            if current_mode == PLAYBACK_MODES['REPEAT']:
+                client.playback_modes[guild_id] = PLAYBACK_MODES['NORMAL']
+            # Save current queue state
+            if guild_id in queues:
+                client.guilds_data[guild_id]['saved_queue'] = queues[guild_id].copy()
             client.playback_modes[guild_id] = PLAYBACK_MODES['LOOP']
             await interaction.response.send_message('🔁 Loop mode enabled.', ephemeral=True)
+
         await update_stable_message(guild_id)
         await clear_channel_messages(interaction.channel, client.guilds_data[guild_id]['stable_message_id'])
 
@@ -270,7 +273,7 @@ class MusicControlView(View):
         queue = queues.get(guild_id)
         if queue:
             random.shuffle(queue)
-            client.guilds_data[guild_id]['original_queue'] = queue.copy()
+            client.guilds_data[guild_id]['saved_queue'] = queue.copy()
             await interaction.response.send_message('🔀 Queue shuffled.', ephemeral=True)
         else:
             await interaction.response.send_message('❌ The queue is empty.', ephemeral=True)
@@ -311,7 +314,7 @@ class MusicControlView(View):
             queue = queues.get(guild_id)
             if queue and 1 <= index <= len(queue):
                 removed_song = queue.pop(index - 1)
-                client.guilds_data[guild_id]['original_queue'] = queue.copy()
+                client.guilds_data[guild_id]['saved_queue'] = queue.copy()
                 await interaction.followup.send(f'❌ Removed **{removed_song["title"]}** from the queue.', ephemeral=True)
                 await update_stable_message(guild_id)
             else:
@@ -333,18 +336,6 @@ def format_time(seconds):
     minutes = int(seconds) // 60
     seconds = int(seconds) % 60
     return f"{minutes:02d}:{seconds:02d}"
-
-# Create a function to generate a progress bar with emoji blocks
-def create_progress_bar_emoji(elapsed, duration):
-    if duration == 0:
-        return ''
-    total_blocks = 20  # Increase number of blocks for finer increments
-    progress_percentage = (elapsed / duration) * 100
-    progress_blocks = round((progress_percentage / 100) * total_blocks)
-    bar = '▶️ '  # Start with a play icon
-    bar += '🟩' * progress_blocks  # Filled blocks
-    bar += '🟥' * (total_blocks - progress_blocks)  # Empty blocks
-    return bar
 
 # Update the stable message with current song and queue
 async def update_stable_message(guild_id):
@@ -371,9 +362,6 @@ async def update_stable_message(guild_id):
         elapsed_str = format_time(elapsed)
         duration_str = format_time(duration)
 
-        # Create a progress bar with emoji blocks
-        progress_bar = create_progress_bar_emoji(elapsed, duration)
-
         now_playing_embed = Embed(
             title='🎶 Now Playing',
             description=f"**[{current_song['title']}]({current_song['webpage_url']})**",
@@ -381,8 +369,8 @@ async def update_stable_message(guild_id):
         )
         now_playing_embed.set_thumbnail(url=current_song.get('thumbnail'))
 
-        # Add progress information
-        now_playing_embed.add_field(name='Progress', value=f"`{elapsed_str} / {duration_str}`\n{progress_bar}", inline=False)
+        # Add duration information
+        now_playing_embed.add_field(name='Duration', value=f"`{elapsed_str} / {duration_str}`", inline=False)
 
         # Add playback mode to the embed
         playback_mode = client.playback_modes.get(guild_id, PLAYBACK_MODES['NORMAL']).capitalize()
@@ -439,38 +427,58 @@ def cancel_disconnect_task(guild_id):
 # Play the next song in the queue
 async def play_next(guild_id):
     guild_id = str(guild_id)
-    # Cancel the progress updater task
-    progress_task = client.guilds_data[guild_id].get('progress_task')
-    if progress_task:
-        progress_task.cancel()
-        client.guilds_data[guild_id]['progress_task'] = None
-
     playback_mode = client.playback_modes.get(guild_id, PLAYBACK_MODES['NORMAL'])
 
-    if playback_mode == PLAYBACK_MODES['REPEAT']:
-        # Re-play the current song
-        current_song = client.guilds_data[guild_id]['current_song']
-        await play_song(guild_id, current_song)
-    else:
-        if playback_mode == PLAYBACK_MODES['LOOP']:
-            # Append the current song to the end of the queue
+    try:
+        if playback_mode == PLAYBACK_MODES['REPEAT']:
+            # Re-play the current song with error handling
             current_song = client.guilds_data[guild_id].get('current_song')
             if current_song:
-                queues[guild_id].append(current_song)
-        if queues.get(guild_id):
-            song_info = queues[guild_id].pop(0)
-            client.guilds_data[guild_id]['current_song'] = song_info
-            await play_song(guild_id, song_info)
-        else:
-            # No more songs in the queue
-            client.guilds_data[guild_id]['current_song'] = None
+                await play_song(guild_id, current_song)
+            else:
+                print(f"Warning: No current song to repeat in guild {guild_id}")
+                client.playback_modes[guild_id] = PLAYBACK_MODES['NORMAL']
+                await play_next(guild_id)
 
-            # Schedule a delayed disconnect
-            if not client.guilds_data[guild_id].get('disconnect_task'):
-                disconnect_task = client.loop.create_task(disconnect_after_delay(guild_id, delay=300))  # 5 minutes
-                client.guilds_data[guild_id]['disconnect_task'] = disconnect_task
+        elif playback_mode == PLAYBACK_MODES['LOOP']:
+            current_song = client.guilds_data[guild_id].get('current_song')
+            if current_song:
+                # Add current song to end of queue before playing next
+                queues.setdefault(guild_id, []).append(current_song)
 
-            await update_stable_message(guild_id)
+            if queues.get(guild_id):
+                # Play next song in queue
+                song_info = queues[guild_id].pop(0)
+                client.guilds_data[guild_id]['current_song'] = song_info
+                await play_song(guild_id, song_info)
+            else:
+                # If queue is empty in loop mode, reset to normal
+                print(f"Warning: Empty queue in loop mode for guild {guild_id}")
+                client.playback_modes[guild_id] = PLAYBACK_MODES['NORMAL']
+                client.guilds_data[guild_id]['current_song'] = None
+                await update_stable_message(guild_id)
+
+        else:  # NORMAL mode
+            if queues.get(guild_id):
+                song_info = queues[guild_id].pop(0)
+                client.guilds_data[guild_id]['current_song'] = song_info
+                await play_song(guild_id, song_info)
+            else:
+                # No more songs in the queue
+                client.guilds_data[guild_id]['current_song'] = None
+
+                # Schedule a delayed disconnect
+                if not client.guilds_data[guild_id].get('disconnect_task'):
+                    disconnect_task = client.loop.create_task(disconnect_after_delay(guild_id, delay=300))  # 5 minutes
+                    client.guilds_data[guild_id]['disconnect_task'] = disconnect_task
+
+                await update_stable_message(guild_id)
+
+    except Exception as e:
+        print(f"Error in play_next for guild {guild_id}: {e}")
+        # Reset to normal mode on error
+        client.playback_modes[guild_id] = PLAYBACK_MODES['NORMAL']
+        await update_stable_message(guild_id)
 
 # Function to play a song
 async def play_song(guild_id, song_info):
@@ -519,28 +527,8 @@ async def play_song(guild_id, song_info):
     client.guilds_data[guild_id]['song_start_time'] = time.monotonic()
     client.guilds_data[guild_id]['song_duration'] = song_info.get('duration', 0)
 
-    # Start the progress updater task
-    client.guilds_data[guild_id]['progress_task'] = client.loop.create_task(update_progress(guild_id))
-
     await update_stable_message(guild_id)
     save_guilds_data()
-
-# Function to update progress periodically
-async def update_progress(guild_id):
-    guild_id = str(guild_id)
-    try:
-        while True:
-            await asyncio.sleep(5)  # Update every 5 seconds to avoid rate limits
-            voice_client = voice_clients.get(guild_id)
-            if not voice_client or not voice_client.is_playing():
-                break  # Stop updating if not playing
-
-            await update_stable_message(guild_id)
-    except asyncio.CancelledError:
-        # Task was cancelled, exit gracefully
-        pass
-    except Exception as e:
-        print(f"Error in update_progress for guild {guild_id}: {e}")
 
 # Helper function to process play requests
 async def process_play_request(user, guild, channel, link, interaction=None):
@@ -597,8 +585,23 @@ async def process_play_request(user, guild, channel, link, interaction=None):
     loop = asyncio.get_event_loop()
     try:
         data = await loop.run_in_executor(None, lambda: ytdl.extract_info(link, download=False))
+    except DownloadError as e:
+        msg = f"❌ Could not download this video: {str(e)}"
+        if interaction:
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await channel.send(msg)
+        return
+    except ExtractorError as e:
+        msg = f"❌ Could not extract video information: {str(e)}"
+        if interaction:
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await channel.send(msg)
+        return
     except Exception as e:
-        msg = f"❌ Error extracting song information: {e}"
+        msg = f"❌ An unexpected error occurred: {str(e)}"
+        print(f"Error in process_play_request: {e}")  # Log the full error
         if interaction:
             await interaction.followup.send(msg, ephemeral=True)
         else:
@@ -624,8 +627,8 @@ async def process_play_request(user, guild, channel, link, interaction=None):
         else:
             await channel.send(msg)
 
-        # Update original queue for loop functionality
-        client.guilds_data[guild_id]['original_queue'] = queues[guild_id].copy()
+        # Update saved queue for loop functionality
+        client.guilds_data[guild_id]['saved_queue'] = queues[guild_id].copy()
 
         # Start playing if not already playing
         if not voice_client.is_playing() and not voice_client.is_paused():
@@ -644,8 +647,8 @@ async def process_play_request(user, guild, channel, link, interaction=None):
             queues[guild_id] = []
         queues[guild_id].append(song_info)
 
-        # Update original queue
-        client.guilds_data[guild_id]['original_queue'] = queues[guild_id].copy()
+        # Update saved queue
+        client.guilds_data[guild_id]['saved_queue'] = queues[guild_id].copy()
 
         # Play or queue the song
         if not voice_client.is_playing():
@@ -732,12 +735,6 @@ async def stop_command(interaction: discord.Interaction):
         voice_clients.pop(guild_id, None)  # Safely remove the voice client
         client.guilds_data[guild_id]['current_song'] = None
 
-        # Cancel the progress updater task
-        progress_task = client.guilds_data[guild_id].get('progress_task')
-        if progress_task:
-            progress_task.cancel()
-            client.guilds_data[guild_id]['progress_task'] = None
-
         # Cancel the disconnect task if it exists
         disconnect_task = client.guilds_data[guild_id].get('disconnect_task')
         if disconnect_task:
@@ -762,7 +759,7 @@ async def clear_queue_command(interaction: discord.Interaction):
     guild_id = str(interaction.guild.id)
     if guild_id in queues:
         queues[guild_id].clear()
-        client.guilds_data[guild_id]['original_queue'] = []
+        client.guilds_data[guild_id]['saved_queue'] = []
         await interaction.response.send_message("🗑️ Queue cleared!", ephemeral=True)
     else:
         await interaction.response.send_message("❌ There is no queue to clear.", ephemeral=True)
@@ -789,7 +786,6 @@ async def nowplaying_command(interaction: discord.Interaction):
 
     elapsed_str = format_time(elapsed)
     duration_str = format_time(duration)
-    progress_bar = create_progress_bar_emoji(elapsed, duration)
 
     # Add playback mode to the embed
     playback_mode = client.playback_modes.get(guild_id, PLAYBACK_MODES['NORMAL']).capitalize()
@@ -800,7 +796,7 @@ async def nowplaying_command(interaction: discord.Interaction):
         color=0x1db954
     )
     now_playing_embed.set_thumbnail(url=current_song.get('thumbnail'))
-    now_playing_embed.add_field(name='Progress', value=f"`{elapsed_str} / {duration_str}`\n{progress_bar}", inline=False)
+    now_playing_embed.add_field(name='Duration', value=f"`{elapsed_str} / {duration_str}`", inline=False)
     now_playing_embed.set_footer(text=f'Playback Mode: {playback_mode}')
 
     await interaction.response.send_message(embed=now_playing_embed, ephemeral=True)
@@ -809,7 +805,7 @@ async def nowplaying_command(interaction: discord.Interaction):
     if guild_data:
         await clear_channel_messages(interaction.channel, guild_data['stable_message_id'])
 
-# Remove command (kept for compatibility)
+# Remove command
 @client.tree.command(name="remove", description="Remove a song from the queue by its index")
 @discord.app_commands.describe(index="The index of the song to remove (starting from 1)")
 async def remove_command(interaction: discord.Interaction, index: int):
@@ -817,7 +813,7 @@ async def remove_command(interaction: discord.Interaction, index: int):
     queue = queues.get(guild_id)
     if queue and 1 <= index <= len(queue):
         removed_song = queue.pop(index - 1)
-        client.guilds_data[guild_id]['original_queue'] = queue.copy()
+        client.guilds_data[guild_id]['saved_queue'] = queue.copy()
         await interaction.response.send_message(f'❌ Removed **{removed_song["title"]}** from the queue.', ephemeral=True)
         await update_stable_message(guild_id)
     else:
