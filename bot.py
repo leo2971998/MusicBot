@@ -519,7 +519,7 @@ async def process_song_data(data, user, guild_id, interaction, play_next=False):
             return
 
         # Add to queue
-        success = await guild_state.add_to_queue(song_info, play_next=play_next)
+        success = await guild_state.add_to_queue(song_info, play_next=play_next_flag)
         if not success:
             await interaction.followup.send("❌ Queue is full! Please wait before adding more songs.", ephemeral=True)
             return
