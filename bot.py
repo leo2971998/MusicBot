@@ -309,6 +309,8 @@ class AddSongModal(Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         song_name_or_url = self.song_input.value.strip()
+        # Respond to the interaction to avoid timeout
+        await interaction.response.defer()
         await process_play_request(
             interaction.user,
             interaction.guild,
@@ -538,8 +540,10 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
     if not user_voice_channel:
         msg = "❌ You are not connected to a voice channel."
         if interaction:
-            await interaction.followup.send(msg)
-            await delete_interaction_message(interaction)
+            if not interaction.response.is_done():
+                await interaction.response.send_message(msg)
+            else:
+                await interaction.followup.send(msg)
         else:
             sent_msg = await channel.send(msg)
             # Schedule deletion
@@ -568,8 +572,10 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
         except Exception as e:
             msg = f"❌ Error searching for the song: {e}"
             if interaction:
-                await interaction.followup.send(msg)
-                await delete_interaction_message(interaction)
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(msg)
+                else:
+                    await interaction.followup.send(msg)
             else:
                 sent_msg = await channel.send(msg)
                 # Schedule deletion
@@ -584,8 +590,10 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
         except Exception as e:
             msg = f"❌ Error extracting song information: {e}"
             if interaction:
-                await interaction.followup.send(msg)
-                await delete_interaction_message(interaction)
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(msg)
+                else:
+                    await interaction.followup.send(msg)
             else:
                 sent_msg = await channel.send(msg)
                 # Schedule deletion
@@ -598,35 +606,39 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
         song_info = data
         song_info['requester'] = user.mention  # Add requester information
 
-        # Add to queue
-        if guild_id not in queues:
-            queues[guild_id] = []
-        if play_next:
-            queues[guild_id].insert(0, song_info)
-        else:
-            queues[guild_id].append(song_info)
-
         # Play or queue the song
-        if not voice_client.is_playing():
+        if not voice_client.is_playing() and not voice_client.is_paused():
             client.guilds_data[guild_id]['current_song'] = song_info
             await play_song(guild_id, song_info)
             msg = f"🎶 Now playing: **{song_info.get('title', 'Unknown title')}**"
             if interaction:
-                await interaction.followup.send(msg)
-                await delete_interaction_message(interaction)
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(msg)
+                else:
+                    await interaction.followup.send(msg)
             else:
                 sent_msg = await channel.send(msg)
                 # Schedule deletion
                 await asyncio.sleep(5)
                 await sent_msg.delete()
         else:
+            # Add to queue
+            if guild_id not in queues:
+                queues[guild_id] = []
+            if play_next:
+                queues[guild_id].insert(0, song_info)
+            else:
+                queues[guild_id].append(song_info)
+
             if play_next:
                 msg = f"➕ Added to play next: **{song_info.get('title', 'Unknown title')}**"
             else:
                 msg = f"➕ Added to queue: **{song_info.get('title', 'Unknown title')}**"
             if interaction:
-                await interaction.followup.send(msg)
-                await delete_interaction_message(interaction)
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(msg)
+                else:
+                    await interaction.followup.send(msg)
             else:
                 sent_msg = await channel.send(msg)
                 # Schedule deletion
@@ -662,8 +674,10 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
                 added_songs.append(song_info['title'])
             msg = f"🎶 Added playlist **{data.get('title', 'Unknown playlist')}** with {len(added_songs)} songs to the queue."
         if interaction:
-            await interaction.followup.send(msg)
-            await delete_interaction_message(interaction)
+            if not interaction.response.is_done():
+                await interaction.response.send_message(msg)
+            else:
+                await interaction.followup.send(msg)
         else:
             sent_msg = await channel.send(msg)
             # Schedule deletion
