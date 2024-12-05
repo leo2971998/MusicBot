@@ -40,10 +40,12 @@ intents.voice_states = True  # Enable voice_states intent
 DATA_FILE = 'guilds_data.json'
 MAX_QUEUE_SIZE = 500  # Limit the queue size to prevent memory leaks
 
+
 # Define playback modes using Enum
 class PlaybackMode(Enum):
     NORMAL = 'normal'
     REPEAT_ONE = 'repeat_one'
+
 
 # Adjusted yt_dlp options
 yt_dl_options = {
@@ -63,10 +65,12 @@ ffmpeg_options = {
     'options': '-vn'
 }
 
+
 def format_time(seconds: int) -> str:
     minutes = seconds // 60
     seconds = seconds % 60
     return f"{minutes:02d}:{seconds:02d}"
+
 
 class ThreadSafeQueue:
     def __init__(self):
@@ -104,6 +108,7 @@ class ThreadSafeQueue:
     async def __len__(self):
         async with self._lock:
             return len(self._queue)
+
 
 class MusicBot(commands.Bot):
     def __init__(self, *args, **kwargs):
@@ -277,10 +282,12 @@ class MusicBot(commands.Bot):
                     now_playing_embed.set_thumbnail(url=current_song.get('thumbnail'))
                     now_playing_embed.add_field(name='Duration', value=f"`{duration_str}`", inline=False)
                     # Add requester
-                    now_playing_embed.add_field(name='Requested by', value=current_song.get('requester', 'Unknown'), inline=False)
+                    now_playing_embed.add_field(name='Requested by', value=current_song.get('requester', 'Unknown'),
+                                                inline=False)
 
                     # Add playback mode to the embed
-                    playback_mode = self.playback_modes.get(guild_id, PlaybackMode.NORMAL).name.replace('_', ' ').title()
+                    playback_mode = self.playback_modes.get(guild_id, PlaybackMode.NORMAL).name.replace('_',
+                                                                                                        ' ').title()
                     now_playing_embed.set_footer(text=f'Playback Mode: {playback_mode}')
                 else:
                     now_playing_embed = Embed(
@@ -298,7 +305,8 @@ class MusicBot(commands.Bot):
             # Queue Embed
             if queue:
                 queue_description = '\n'.join(
-                    [f"{idx + 1}. **[{song['title']}]({song['webpage_url']})** — *{song.get('requester', 'Unknown')}*" for idx, song in enumerate(queue)]
+                    [f"{idx + 1}. **[{song['title']}]({song['webpage_url']})** — *{song.get('requester', 'Unknown')}*"
+                     for idx, song in enumerate(queue)]
                 )
             else:
                 queue_description = 'No songs in the queue.'
@@ -373,7 +381,8 @@ class MusicBot(commands.Bot):
 
                     # Schedule a delayed disconnect
                     if not self.guilds_data[guild_id].get('disconnect_task'):
-                        disconnect_task = await self.schedule_task(self.disconnect_after_delay(guild_id, delay=300))  # 5 minutes
+                        disconnect_task = await self.schedule_task(
+                            self.disconnect_after_delay(guild_id, delay=300))  # 5 minutes
                         self.guilds_data[guild_id]['disconnect_task'] = disconnect_task
 
                     # Reset playback mode to NORMAL
@@ -446,24 +455,24 @@ class MusicBot(commands.Bot):
 
     async def process_play_request(self, user, guild, channel, link, interaction=None, play_next=False):
         guild_id = str(guild.id)
-        async with self.guild_lock_timeout(guild_id):
-            # Initialize guild data if not present
-            if guild_id not in self.guilds_data:
-                self.guilds_data[guild_id] = {}
 
-            # Ensure the user is a Member, not just a User
-            if not isinstance(user, discord.Member):
-                user = guild.get_member(user.id) or await guild.fetch_member(user.id)
+    async with self.guild_lock_timeout(guild_id):
+        # Initialize guild data if not present
+        if guild_id not in self.guilds_data:
+            self.guilds_data[guild_id] = {}
 
-            # Refresh the member's voice state
-            await guild.chunk()
-            user = guild.get_member(user.id)
+        # Ensure the user is a Member, not just a User
+        if not isinstance(user, discord.Member):
+            user = guild.get_member(user.id) or await guild.fetch_member(user.id)
 
-            user_voice_channel = user.voice.channel if user.voice else None
+        # Refresh the member's voice state
+        user = await guild.fetch_member(user.id)
 
-            if not user_voice_channel:
-                msg = "❌ You are not connected to a voice channel."
-                return msg
+        user_voice_channel = user.voice.channel if user.voice else None
+
+        if not user_voice_channel:
+            msg = "❌ You are not connected to a voice channel."
+            return msg
 
             # Ensure voice connection
             connected = await self.ensure_voice_connection(user_voice_channel, guild_id)
@@ -746,6 +755,7 @@ class MusicBot(commands.Bot):
         logger.error(f"Error in event {event}: {args} {kwargs}")
         logger.exception("Exception occurred")
 
+
 class MusicControlView(View):
     def __init__(self, queue, bot):
         super().__init__(timeout=None)
@@ -879,6 +889,7 @@ class MusicControlView(View):
             logger.exception(f"Error handling interaction: {e}")
             await interaction.followup.send('❌ An error occurred.', ephemeral=True)
 
+
 class AddSongModal(Modal):
     def __init__(self, interaction: discord.Interaction, bot, play_next=False):
         title = "Play Next" if play_next else "Add Song"
@@ -920,6 +931,7 @@ class AddSongModal(Modal):
             logger.exception(f"Modal submission error: {e}")
             await interaction.followup.send("❌ An error occurred while processing your request.", ephemeral=True)
 
+
 class RemoveSongModal(Modal):
     def __init__(self, interaction: discord.Interaction, bot):
         super().__init__(title="Remove Song")
@@ -941,7 +953,8 @@ class RemoveSongModal(Modal):
             guild_id = str(interaction.guild.id)
             removed_song = await self.bot.remove_from_queue(guild_id, index)
             if removed_song:
-                await interaction.response.send_message(f'❌ Removed **{removed_song["title"]}** from the queue.', ephemeral=True)
+                await interaction.response.send_message(f'❌ Removed **{removed_song["title"]}** from the queue.',
+                                                        ephemeral=True)
                 await self.bot.update_stable_message(guild_id)
             else:
                 await interaction.response.send_message('❌ Invalid song index.', ephemeral=True)
@@ -950,6 +963,7 @@ class RemoveSongModal(Modal):
         except Exception as e:
             logger.exception(f"Error in RemoveSongModal: {e}")
             await interaction.response.send_message('❌ An error occurred.', ephemeral=True)
+
 
 class MusicCog(commands.Cog):
     def __init__(self, bot):
@@ -993,7 +1007,8 @@ class MusicCog(commands.Cog):
     async def play_command(self, interaction: discord.Interaction, link: str):
         try:
             await interaction.response.defer()
-            response_message = await self.bot.process_play_request(interaction.user, interaction.guild, interaction.channel, link, interaction=interaction)
+            response_message = await self.bot.process_play_request(interaction.user, interaction.guild,
+                                                                   interaction.channel, link, interaction=interaction)
             if response_message:
                 await interaction.followup.send(response_message)
             # Schedule deletion of the interaction response
@@ -1007,7 +1022,9 @@ class MusicCog(commands.Cog):
     async def playnext_command(self, interaction: discord.Interaction, link: str):
         try:
             await interaction.response.defer()
-            response_message = await self.bot.process_play_request(interaction.user, interaction.guild, interaction.channel, link, interaction=interaction, play_next=True)
+            response_message = await self.bot.process_play_request(interaction.user, interaction.guild,
+                                                                   interaction.channel, link, interaction=interaction,
+                                                                   play_next=True)
             if response_message:
                 await interaction.followup.send(response_message)
             # Schedule deletion of the interaction response
@@ -1051,6 +1068,7 @@ class MusicCog(commands.Cog):
             logger.exception(f"An error occurred: {error}")
             await ctx.send("❌ An unexpected error occurred. Please try again later.")
 
+
 async def main():
     client = MusicBot()
     await client.add_cog(MusicCog(client))
@@ -1075,7 +1093,8 @@ async def main():
                     logger.error(f"Failed to delete message {message.id}: {e}")
 
                 # Treat the message content as a song request
-                response_message = await client.process_play_request(message.author, message.guild, message.channel, message.content)
+                response_message = await client.process_play_request(message.author, message.guild, message.channel,
+                                                                     message.content)
                 if response_message:
                     sent_msg = await message.channel.send(response_message)
                     # Schedule deletion
@@ -1088,6 +1107,7 @@ async def main():
             await client.process_commands(message)
 
     await client.start(TOKEN)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
