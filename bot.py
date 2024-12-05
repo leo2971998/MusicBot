@@ -19,6 +19,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
 intents.members = True
+intents.voice_states = True  # Add this line
 client = commands.Bot(command_prefix=".", intents=intents)
 client.guilds_data = {}
 
@@ -498,7 +499,11 @@ async def play_next(guild_id):
 # Function to play a song
 async def play_song(guild_id, song_info):
     guild_id = str(guild_id)
-    voice_client = voice_clients[guild_id]
+    voice_client = voice_clients.get(guild_id)
+
+    if not voice_client:
+        print(f"No voice client for guild {guild_id}")
+        return
 
     # Cancel any scheduled disconnect task
     cancel_disconnect_task(guild_id)
@@ -551,22 +556,39 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
     if guild_id not in client.guilds_data:
         client.guilds_data[guild_id] = {}
 
-    # Get the existing voice client
-    voice_client = voice_clients.get(guild_id)
+    # Ensure the user is a Member, not just a User
+    if not isinstance(user, discord.Member):
+        user = guild.get_member(user.id) or await guild.fetch_member(user.id)
+
+    # Refresh the member's voice state
+    if not user.voice:
+        await guild.request_members(user_ids=[user.id])
+        user = guild.get_member(user.id)
+
     user_voice_channel = user.voice.channel if user.voice else None
 
     if not user_voice_channel:
         msg = "❌ You are not connected to a voice channel."
         return msg
 
-    if voice_client:
-        if voice_client.channel != user_voice_channel:
-            # Move the bot to the user's voice channel
-            await voice_client.move_to(user_voice_channel)
-    else:
-        # Connect to the user's voice channel
-        voice_client = await user_voice_channel.connect()
-        voice_clients[guild_id] = voice_client
+    # Get the existing voice client
+    voice_client = voice_clients.get(guild_id)
+
+    try:
+        if voice_client:
+            if voice_client.channel != user_voice_channel:
+                # Move the bot to the user's voice channel
+                await voice_client.move_to(user_voice_channel)
+        else:
+            # Connect to the user's voice channel
+            voice_client = await user_voice_channel.connect()
+            voice_clients[guild_id] = voice_client
+    except discord.errors.ClientException as e:
+        print(f"ClientException: {e}")
+        return f"❌ An error occurred: {e}"
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return f"❌ An unexpected error occurred: {e}"
 
     # Cancel any scheduled disconnect task
     cancel_disconnect_task(guild_id)
