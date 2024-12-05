@@ -10,7 +10,8 @@ import json
 import random
 from enum import Enum
 import logging
-from asyncio import Lock
+from asyncio import Lock, TimeoutError
+from contextlib import asynccontextmanager
 
 # Set up logging
 logging.basicConfig(
@@ -37,6 +38,7 @@ intents.voice_states = True  # Enable voice_states intent
 
 # Data persistence
 DATA_FILE = 'guilds_data.json'
+MAX_QUEUE_SIZE = 500  # Limit the queue size to prevent memory leaks
 
 # Define playback modes using Enum
 class PlaybackMode(Enum):
@@ -74,11 +76,26 @@ class MusicBot(commands.Bot):
         self.voice_clients = {}
         self.playback_modes = {}
         self.data_lock = Lock()
+        self.active_tasks = set()
 
     def get_guild_lock(self, guild_id):
         if guild_id not in self.guild_locks:
             self.guild_locks[guild_id] = Lock()
         return self.guild_locks[guild_id]
+
+    @asynccontextmanager
+    async def guild_lock_timeout(self, guild_id: str, timeout: float = 30.0):
+        try:
+            lock = self.get_guild_lock(guild_id)
+            async with asyncio.timeout(timeout):
+                async with lock:
+                    yield
+        except TimeoutError:
+            logger.error(f"Lock acquisition timeout for guild {guild_id}")
+            raise
+        except Exception as e:
+            logger.error(f"Error in guild lock for {guild_id}: {e}")
+            raise
 
     async def save_guilds_data(self):
         async with self.data_lock:
@@ -96,9 +113,18 @@ class MusicBot(commands.Bot):
             }
             # Save to file atomically
             temp_file = f"{DATA_FILE}.tmp"
-            with open(temp_file, 'w') as f:
-                json.dump(data, f)
-            os.replace(temp_file, DATA_FILE)
+            try:
+                with open(temp_file, 'w') as f:
+                    json.dump(data, f)
+                os.replace(temp_file, DATA_FILE)
+            except (IOError, OSError) as e:
+                logger.error(f"Failed to save guild data: {e}")
+                if os.path.exists(temp_file):
+                    try:
+                        os.remove(temp_file)
+                    except OSError:
+                        pass
+                raise
 
     async def load_guilds_data(self):
         if os.path.exists(DATA_FILE):
@@ -151,8 +177,7 @@ class MusicBot(commands.Bot):
 
     async def update_stable_message(self, guild_id):
         guild_id = str(guild_id)
-        lock = self.get_guild_lock(guild_id)
-        async with lock:
+        async with self.guild_lock_timeout(guild_id):
             guild_data = self.guilds_data.get(guild_id)
             if not guild_data:
                 return
@@ -235,8 +260,7 @@ class MusicBot(commands.Bot):
                     logger.error(f"Failed to delete message {message.id}: {e}")
 
     async def cancel_disconnect_task(self, guild_id):
-        lock = self.get_guild_lock(guild_id)
-        async with lock:
+        async with self.guild_lock_timeout(guild_id):
             disconnect_task = self.guilds_data.get(guild_id, {}).get('disconnect_task')
             if disconnect_task:
                 disconnect_task.cancel()
@@ -244,8 +268,7 @@ class MusicBot(commands.Bot):
 
     async def play_next(self, guild_id):
         guild_id = str(guild_id)
-        lock = self.get_guild_lock(guild_id)
-        async with lock:
+        async with self.guild_lock_timeout(guild_id):
             # Cancel the progress updater task
             progress_task = self.guilds_data[guild_id].get('progress_task')
             if progress_task:
@@ -269,7 +292,7 @@ class MusicBot(commands.Bot):
 
                     # Schedule a delayed disconnect
                     if not self.guilds_data[guild_id].get('disconnect_task'):
-                        disconnect_task = self.loop.create_task(self.disconnect_after_delay(guild_id, delay=300))  # 5 minutes
+                        disconnect_task = await self.schedule_task(self.disconnect_after_delay(guild_id, delay=300))  # 5 minutes
                         self.guilds_data[guild_id]['disconnect_task'] = disconnect_task
 
                     # Reset playback mode to NORMAL
@@ -278,8 +301,7 @@ class MusicBot(commands.Bot):
 
     async def play_song(self, guild_id, song_info):
         guild_id = str(guild_id)
-        lock = self.get_guild_lock(guild_id)
-        async with lock:
+        async with self.guild_lock_timeout(guild_id):
             voice_client = self.voice_clients.get(guild_id)
 
             if not voice_client:
@@ -332,8 +354,7 @@ class MusicBot(commands.Bot):
 
     async def process_play_request(self, user, guild, channel, link, interaction=None, play_next=False):
         guild_id = str(guild.id)
-        lock = self.get_guild_lock(guild_id)
-        async with lock:
+        async with self.guild_lock_timeout(guild_id):
             # Initialize guild data if not present
             if guild_id not in self.guilds_data:
                 self.guilds_data[guild_id] = {}
@@ -363,8 +384,7 @@ class MusicBot(commands.Bot):
                         await voice_client.move_to(user_voice_channel)
                 else:
                     # Connect to the user's voice channel
-                    voice_client = await user_voice_channel.connect()
-                    self.voice_clients[guild_id] = voice_client
+                    voice_client = await self.connect_voice(guild_id, user_voice_channel)
             except discord.errors.ClientException as e:
                 logger.error(f"ClientException: {e}")
                 return f"❌ An error occurred: {e}"
@@ -375,23 +395,10 @@ class MusicBot(commands.Bot):
             # Cancel any scheduled disconnect task
             await self.cancel_disconnect_task(guild_id)
 
-            # Adjusted search handling using yt_dlp's built-in search
-            if 'list=' not in link and 'watch?v=' not in link and 'youtu.be/' not in link:
-                # Treat as search query
-                search_query = f"ytsearch:{link}"
-                try:
-                    data = ytdl.extract_info(search_query, download=False)['entries'][0]
-                except Exception as e:
-                    msg = f"❌ Error searching for the song: {e}"
-                    return msg
-            else:
-                # Extract audio and play
-                loop = asyncio.get_event_loop()
-                try:
-                    data = await loop.run_in_executor(None, lambda: ytdl.extract_info(link, download=False))
-                except Exception as e:
-                    msg = f"❌ Error extracting song information: {e}"
-                    return msg
+            try:
+                data = await self.extract_song_info(link)
+            except ValueError as e:
+                return f"❌ {e}"
 
             # Handle single video
             if 'entries' not in data:
@@ -404,14 +411,10 @@ class MusicBot(commands.Bot):
                     await self.play_song(guild_id, song_info)
                     msg = f"🎶 Now playing: **{song_info.get('title', 'Unknown title')}**"
                 else:
-                    # Add to queue
-                    if guild_id not in self.queues:
-                        self.queues[guild_id] = []
-                    if play_next:
-                        self.queues[guild_id].insert(0, song_info)
-                    else:
-                        self.queues[guild_id].append(song_info)
-
+                    added = await self.add_to_queue(guild_id, song_info, play_next)
+                    if not added:
+                        msg = f"❌ The queue is full. Cannot add more songs."
+                        return msg
                     if play_next:
                         msg = f"➕ Added to play next: **{song_info.get('title', 'Unknown title')}**"
                     else:
@@ -427,10 +430,10 @@ class MusicBot(commands.Bot):
                             continue  # Skip if entry is None
                         song_info = entry
                         song_info['requester'] = user.mention  # Add requester information
-                        # Add to queue at the front
-                        if guild_id not in self.queues:
-                            self.queues[guild_id] = []
-                        self.queues[guild_id].insert(0, song_info)
+                        added = await self.add_to_queue(guild_id, song_info, play_next)
+                        if not added:
+                            msg = f"❌ The queue is full. Cannot add more songs."
+                            return msg
                         added_songs.append(song_info['title'])
                     msg = f"🎶 Added playlist **{data.get('title', 'Unknown playlist')}** with {len(added_songs)} songs to play next."
                 else:
@@ -439,10 +442,10 @@ class MusicBot(commands.Bot):
                             continue  # Skip if entry is None
                         song_info = entry
                         song_info['requester'] = user.mention  # Add requester information
-                        # Add to queue at the end
-                        if guild_id not in self.queues:
-                            self.queues[guild_id] = []
-                        self.queues[guild_id].append(song_info)
+                        added = await self.add_to_queue(guild_id, song_info)
+                        if not added:
+                            msg = f"❌ The queue is full. Cannot add more songs."
+                            return msg
                         added_songs.append(song_info['title'])
                     msg = f"🎶 Added playlist **{data.get('title', 'Unknown playlist')}** with {len(added_songs)} songs to the queue."
 
@@ -462,6 +465,38 @@ class MusicBot(commands.Bot):
             await self.update_stable_message(guild_id)
             return msg
 
+    async def extract_song_info(self, query: str) -> dict:
+        try:
+            if 'list=' not in query and 'watch?v=' not in query and 'youtu.be/' not in query:
+                search_query = f"ytsearch:{query}"
+                data = await self.loop.run_in_executor(None, lambda: ytdl.extract_info(search_query, download=False))
+                if not data.get('entries'):
+                    raise ValueError("No results found.")
+                return data['entries'][0]
+            else:
+                data = await self.loop.run_in_executor(None, lambda: ytdl.extract_info(query, download=False))
+                return data
+        except yt_dlp.DownloadError as e:
+            logger.error(f"YouTube-DL error: {e}")
+            raise ValueError(f"Failed to fetch video information: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error in extract_song_info: {e}")
+            raise ValueError("An unexpected error occurred while processing the video.")
+
+    async def add_to_queue(self, guild_id: str, song_info: dict, play_next: bool = False) -> bool:
+        async with self.guild_lock_timeout(guild_id):
+            if guild_id not in self.queues:
+                self.queues[guild_id] = []
+
+            if len(self.queues[guild_id]) >= MAX_QUEUE_SIZE:
+                return False
+
+            if play_next:
+                self.queues[guild_id].insert(0, song_info)
+            else:
+                self.queues[guild_id].append(song_info)
+            return True
+
     async def disconnect_after_delay(self, guild_id, delay):
         try:
             await asyncio.sleep(delay)
@@ -470,12 +505,38 @@ class MusicBot(commands.Bot):
                 await voice_client.disconnect()
                 del self.voice_clients[guild_id]
                 # Remove the disconnect task reference
-                async with self.get_guild_lock(guild_id):
+                async with self.guild_lock_timeout(guild_id):
                     self.guilds_data[guild_id]['disconnect_task'] = None
                 await self.update_stable_message(guild_id)
         except asyncio.CancelledError:
             # The task was cancelled, do nothing
             pass
+
+    async def connect_voice(self, guild_id, voice_channel):
+        try:
+            voice_client = await voice_channel.connect(timeout=20.0)
+            self.voice_clients[guild_id] = voice_client
+            return voice_client
+        except discord.ClientException as e:
+            logger.error(f"Voice connection error for guild {guild_id}: {e}")
+            raise
+        except asyncio.TimeoutError:
+            logger.error(f"Voice connection timeout for guild {guild_id}")
+            raise discord.ClientException("Failed to connect to voice channel: Timeout")
+
+    async def schedule_task(self, coro):
+        task = self.loop.create_task(coro)
+        self.active_tasks.add(task)
+        task.add_done_callback(self.active_tasks.discard)
+        return task
+
+    async def close(self):
+        # Cancel all active tasks
+        for task in self.active_tasks:
+            task.cancel()
+        await asyncio.gather(*self.active_tasks, return_exceptions=True)
+        self.active_tasks.clear()
+        await super().close()
 
 # Define the MusicControlView
 class MusicControlView(View):
@@ -636,29 +697,33 @@ class AddSongModal(Modal):
         self.add_item(self.song_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        song_name_or_url = self.song_input.value.strip()
-        # We must respond to the modal submission within 3 seconds.
-        await interaction.response.defer(thinking=True)
-        response_message = await self.bot.process_play_request(
-            interaction.user,
-            interaction.guild,
-            interaction.channel,
-            song_name_or_url,
-            interaction=interaction,
-            play_next=self.play_next
-        )
-        # Since we deferred, we can now send the response.
-        if response_message:
-            await interaction.followup.send(response_message)
-        # Clear messages except the stable message
-        guild_id = str(interaction.guild.id)
-        guild_data = self.bot.guilds_data.get(guild_id)
-        if guild_data:
-            stable_message_id = guild_data.get('stable_message_id')
-            channel_id = guild_data.get('channel_id')
-            if stable_message_id and channel_id:
-                channel = self.bot.get_channel(int(channel_id))
-                await self.bot.clear_channel_messages(channel, int(stable_message_id))
+        try:
+            song_name_or_url = self.song_input.value.strip()
+            await interaction.response.send_message("Processing your request...", ephemeral=True)
+            response_message = await self.bot.process_play_request(
+                interaction.user,
+                interaction.guild,
+                interaction.channel,
+                song_name_or_url,
+                interaction=interaction,
+                play_next=self.play_next
+            )
+            if response_message:
+                await interaction.edit_original_response(content=response_message)
+            else:
+                await interaction.edit_original_response(content="❌ No response from the bot.")
+            # Clear messages except the stable message
+            guild_id = str(interaction.guild.id)
+            guild_data = self.bot.guilds_data.get(guild_id)
+            if guild_data:
+                stable_message_id = guild_data.get('stable_message_id')
+                channel_id = guild_data.get('channel_id')
+                if stable_message_id and channel_id:
+                    channel = self.bot.get_channel(int(channel_id))
+                    await self.bot.clear_channel_messages(channel, int(stable_message_id))
+        except Exception as e:
+            logger.error(f"Modal submission error: {e}")
+            await interaction.edit_original_response(content="❌ An error occurred while processing your request.")
 
 # Create the RemoveSongModal class
 class RemoveSongModal(Modal):
@@ -674,10 +739,10 @@ class RemoveSongModal(Modal):
         self.add_item(self.song_index)
 
     async def on_submit(self, interaction: discord.Interaction):
-        index = self.song_index.value.strip()
-        guild_id = str(interaction.guild.id)
-        queue = self.bot.queues.get(guild_id)
         try:
+            index = self.song_index.value.strip()
+            guild_id = str(interaction.guild.id)
+            queue = self.bot.queues.get(guild_id)
             index = int(index)
             if queue and 1 <= index <= len(queue):
                 removed_song = queue.pop(index - 1)
@@ -687,6 +752,9 @@ class RemoveSongModal(Modal):
                 await interaction.response.send_message('❌ Invalid song index.', ephemeral=True)
         except ValueError:
             await interaction.response.send_message('❌ Please enter a valid number.', ephemeral=True)
+        except Exception as e:
+            logger.error(f"Error in RemoveSongModal: {e}")
+            await interaction.response.send_message('❌ An error occurred.', ephemeral=True)
 
 class MusicCog(commands.Cog):
     def __init__(self, bot):
@@ -696,8 +764,7 @@ class MusicCog(commands.Cog):
     @commands.has_permissions(manage_channels=True)
     async def setup(self, interaction: discord.Interaction):
         guild_id = str(interaction.guild.id)
-        lock = self.bot.get_guild_lock(guild_id)
-        async with lock:
+        async with self.bot.guild_lock_timeout(guild_id):
             # Check if the channel exists
             channel = discord.utils.get(interaction.guild.channels, name='leo-song-requests')
             if not channel:
