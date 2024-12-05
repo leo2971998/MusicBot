@@ -106,7 +106,7 @@ class ThreadSafeQueue:
             return len(self._queue)
 
 class MusicBot(commands.Bot):
-    def __init__(self, *args, **kwargs):
+     def __init__(self, *args, **kwargs):
         super().__init__(command_prefix=".", intents=intents, *args, **kwargs)
         self.guild_locks = {}
         self.guilds_data = {}
@@ -115,6 +115,8 @@ class MusicBot(commands.Bot):
         self.playback_modes = {}
         self.data_lock = Lock()
         self.active_tasks = set()
+        self.voice_state_heartbeat_task = None
+
 
     async def setup_hook(self):
         self.voice_state_heartbeat_task = self.loop.create_task(self.voice_state_heartbeat())
@@ -635,6 +637,8 @@ class MusicBot(commands.Bot):
         return task
 
     async def close(self):
+        if self.voice_state_heartbeat_task:
+            self.voice_state_heartbeat_task.cancel()
         # Cancel all active tasks
         for task in self.active_tasks:
             task.cancel()
