@@ -456,24 +456,23 @@ class MusicBot(commands.Bot):
     async def process_play_request(self, user, guild, channel, link, interaction=None, play_next=False):
         guild_id = str(guild.id)
 
-    async with self.guild_lock_timeout(guild_id):
-        # Initialize guild data if not present
-        if guild_id not in self.guilds_data:
-            self.guilds_data[guild_id] = {}
-
-        # Ensure the user is a Member, not just a User
-        if not isinstance(user, discord.Member):
-            user = guild.get_member(user.id) or await guild.fetch_member(user.id)
-
-        # Refresh the member's voice state
-        user = await guild.fetch_member(user.id)
-
-        user_voice_channel = user.voice.channel if user.voice else None
+        async with self.guild_lock_timeout(guild_id):
+            # Initialize guild data if not present
+            if guild_id not in self.guilds_data:
+                self.guilds_data[guild_id] = {}
+    
+            # Ensure the user is a Member, not just a User
+            if not isinstance(user, discord.Member):
+                user = guild.get_member(user.id) or await guild.fetch_member(user.id)
+    
+            # Refresh the member's voice state
+            user = await guild.fetch_member(user.id)
+    
+            user_voice_channel = user.voice.channel if user.voice else None
 
         if not user_voice_channel:
             msg = "❌ You are not connected to a voice channel."
             return msg
-
             # Ensure voice connection
             connected = await self.ensure_voice_connection(user_voice_channel, guild_id)
             if not connected:
