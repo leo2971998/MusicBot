@@ -469,31 +469,32 @@ class MusicBot(commands.Bot):
             user = await guild.fetch_member(user.id)
     
             user_voice_channel = user.voice.channel if user.voice else None
-
-        if not user_voice_channel:
-            msg = "❌ You are not connected to a voice channel."
-            return msg
+    
+            if not user_voice_channel:
+                msg = "❌ You are not connected to a voice channel."
+                return msg
+    
             # Ensure voice connection
             connected = await self.ensure_voice_connection(user_voice_channel, guild_id)
             if not connected:
                 msg = "❌ Failed to connect to the voice channel."
                 return msg
-
+    
             voice_client = self.voice_clients_dict.get(guild_id)
-
+    
             # Cancel any scheduled disconnect task
             await self.cancel_disconnect_task(guild_id)
-
+    
             try:
                 data = await self.extract_song_info(link)
             except ValueError as e:
                 return f"❌ {e}"
-
+    
             # Handle single video
             if 'entries' not in data:
                 song_info = data
                 song_info['requester'] = user.mention  # Add requester information
-
+    
                 # Play or queue the song
                 if not voice_client.is_playing() and not voice_client.is_paused():
                     self.guilds_data[guild_id]['current_song'] = song_info
@@ -537,11 +538,11 @@ class MusicBot(commands.Bot):
                             return msg
                         added_songs.append(song_info['title'])
                     msg = f"🎶 Added playlist **{data.get('title', 'Unknown playlist')}** with {len(added_songs)} songs to the queue."
-
+    
                 # Start playing if not already playing
                 if not voice_client.is_playing() and not voice_client.is_paused():
                     await self.play_next(guild_id)
-
+    
             # Clear messages except the stable message
             guild_data = self.guilds_data.get(guild_id)
             if guild_data:
@@ -550,10 +551,9 @@ class MusicBot(commands.Bot):
                 if stable_message_id and channel_id:
                     channel = self.get_channel(int(channel_id))
                     await self.clear_channel_messages(channel, int(stable_message_id))
-
+    
             await self.update_stable_message(guild_id)
             return msg
-
     async def extract_song_info(self, query: str) -> dict:
         try:
             if 'list=' not in query and 'watch?v=' not in query and 'youtu.be/' not in query:
