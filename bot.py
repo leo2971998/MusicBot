@@ -48,11 +48,12 @@ class PlaybackMode(Enum):
 # Adjusted yt_dlp options
 yt_dl_options = {
     "format": "bestaudio/best",
-    "noplaylist": True,
+    "noplaylist": False,
     "quiet": True,
     "default_search": "auto",
     "extract_flat": False,
     "nocheckcertificate": True,
+    "geo_bypass": True,
 }
 ytdl = yt_dlp.YoutubeDL(yt_dl_options)
 
@@ -62,9 +63,9 @@ ffmpeg_options = {
     'options': '-vn'
 }
 
-def format_time(seconds):
-    minutes = int(seconds) // 60
-    seconds = int(seconds) % 60
+def format_time(seconds: int) -> str:
+    minutes = seconds // 60
+    seconds = seconds % 60
     return f"{minutes:02d}:{seconds:02d}"
 
 class GuildQueue:
@@ -72,7 +73,7 @@ class GuildQueue:
         self._queue = []
         self._lock = asyncio.Lock()
 
-    async def add(self, item, position=None):
+    async def add(self, item, position=None) -> bool:
         async with self._lock:
             if len(self._queue) >= MAX_QUEUE_SIZE:
                 return False
@@ -107,7 +108,7 @@ class MusicBot(commands.Bot):
         self.guild_locks = {}
         self.guilds_data = {}
         self.queues = {}
-        self.voice_clients = {}
+        self.voice_clients_dict = {}
         self.playback_modes = {}
         self.data_lock = Lock()
         self.active_tasks = set()
@@ -120,19 +121,16 @@ class MusicBot(commands.Bot):
 
     @asynccontextmanager
     async def guild_lock_timeout(self, guild_id: str, timeout: float = 30.0):
+        lock = self.get_guild_lock(guild_id)
         try:
-            lock = self.get_guild_lock(guild_id)
             await asyncio.wait_for(lock.acquire(), timeout)
-            try:
-                yield
-            finally:
-                lock.release()
+            yield
         except TimeoutError:
             logger.error(f"Lock acquisition timeout for guild {guild_id}")
             raise
-        except Exception as e:
-            logger.error(f"Error in guild lock for {guild_id}: {e}")
-            raise
+        finally:
+            if lock.locked():
+                lock.release()
 
     async def save_guilds_data(self):
         async with self.data_lock:
@@ -250,10 +248,10 @@ class MusicBot(commands.Bot):
                     return
 
                 queue = await self.get_queue(guild_id)
-                voice_client = self.voice_clients.get(guild_id)
+                voice_client = self.voice_clients_dict.get(guild_id)
 
                 # Now Playing Embed
-                if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
+                if voice_client and voice_client.is_connected() and (voice_client.is_playing() or voice_client.is_paused()):
                     current_song = guild_data.get('current_song')
                     if current_song:
                         duration = guild_data.get('song_duration', 0)
@@ -312,20 +310,23 @@ class MusicBot(commands.Bot):
 
                 await self.save_guilds_data()
             except Exception as e:
-                logger.error(f"Error in update_stable_message for guild {guild_id}: {e}")
+                logger.exception(f"Error in update_stable_message for guild {guild_id}: {e}")
 
     async def clear_channel_messages(self, channel, stable_message_id):
         # Make sure stable_message_id is valid
         if not stable_message_id:
             return
-        async for message in channel.history(limit=100):
-            if message.id != stable_message_id and not message.pinned:
-                try:
-                    await message.delete()
-                except discord.Forbidden:
-                    logger.warning(f"Permission error: Cannot delete message {message.id}")
-                except discord.HTTPException as e:
-                    logger.error(f"Failed to delete message {message.id}: {e}")
+        try:
+            async for message in channel.history(limit=100):
+                if message.id != stable_message_id and not message.pinned:
+                    try:
+                        await message.delete()
+                    except discord.Forbidden:
+                        logger.warning(f"Permission error: Cannot delete message {message.id}")
+                    except discord.HTTPException as e:
+                        logger.error(f"Failed to delete message {message.id}: {e}")
+        except Exception as e:
+            logger.exception(f"Error clearing messages in channel {channel.id}: {e}")
 
     async def cancel_disconnect_task(self, guild_id):
         async with self.guild_lock_timeout(guild_id):
@@ -337,7 +338,7 @@ class MusicBot(commands.Bot):
     async def play_next(self, guild_id):
         guild_id = str(guild_id)
         async with self.guild_lock_timeout(guild_id):
-            # Cancel the progress updater task
+            # Cancel the progress updater task if you have one
             progress_task = self.guilds_data[guild_id].get('progress_task')
             if progress_task:
                 progress_task.cancel()
@@ -370,9 +371,9 @@ class MusicBot(commands.Bot):
     async def play_song(self, guild_id, song_info):
         guild_id = str(guild_id)
         async with self.guild_lock_timeout(guild_id):
-            voice_client = self.voice_clients.get(guild_id)
+            voice_client = self.voice_clients_dict.get(guild_id)
 
-            if not voice_client:
+            if not voice_client or not voice_client.is_connected():
                 logger.error(f"No voice client for guild {guild_id}")
                 return
 
@@ -394,7 +395,11 @@ class MusicBot(commands.Bot):
             if voice_client.is_playing() or voice_client.is_paused():
                 voice_client.stop()
 
-            player = discord.FFmpegPCMAudio(song_url, **ffmpeg_options)
+            try:
+                player = discord.FFmpegPCMAudio(song_url, **ffmpeg_options)
+            except Exception as e:
+                logger.exception(f"Error creating FFmpegPCMAudio: {e}")
+                return
 
             def after_playing(error):
                 if error:
@@ -432,9 +437,8 @@ class MusicBot(commands.Bot):
                 user = guild.get_member(user.id) or await guild.fetch_member(user.id)
 
             # Refresh the member's voice state
-            if not user.voice:
-                await guild.request_members(user_ids=[user.id])
-                user = guild.get_member(user.id)
+            await guild.chunk()
+            user = guild.get_member(user.id)
 
             user_voice_channel = user.voice.channel if user.voice else None
 
@@ -448,7 +452,7 @@ class MusicBot(commands.Bot):
                 msg = "❌ Failed to connect to the voice channel."
                 return msg
 
-            voice_client = self.voice_clients.get(guild_id)
+            voice_client = self.voice_clients_dict.get(guild_id)
 
             # Cancel any scheduled disconnect task
             await self.cancel_disconnect_task(guild_id)
@@ -572,10 +576,10 @@ class MusicBot(commands.Bot):
     async def disconnect_after_delay(self, guild_id, delay):
         try:
             await asyncio.sleep(delay)
-            voice_client = self.voice_clients.get(guild_id)
-            if voice_client and not voice_client.is_playing():
+            voice_client = self.voice_clients_dict.get(guild_id)
+            if voice_client and not voice_client.is_playing() and not voice_client.is_paused():
                 await voice_client.disconnect()
-                self.voice_clients.pop(guild_id, None)
+                self.voice_clients_dict.pop(guild_id, None)
                 # Remove the disconnect task reference
                 async with self.guild_lock_timeout(guild_id):
                     self.guilds_data[guild_id]['disconnect_task'] = None
@@ -584,50 +588,29 @@ class MusicBot(commands.Bot):
             # The task was cancelled, do nothing
             pass
 
-    async def connect_voice(self, guild_id, voice_channel):
-        MAX_RETRIES = 3
-        retry_count = 0
-
-        while retry_count < MAX_RETRIES:
-            try:
-                if guild_id in self.voice_clients:
-                    if self.voice_clients[guild_id].is_connected():
-                        return self.voice_clients[guild_id]
-                    else:
-                        self.voice_clients.pop(guild_id, None)
-
-                voice_client = await voice_channel.connect(timeout=10.0)
-                self.voice_clients[guild_id] = voice_client
-                return voice_client
-
-            except (discord.ClientException, asyncio.TimeoutError) as e:
-                retry_count += 1
-                logger.warning(f"Voice connection attempt {retry_count} failed for guild {guild_id}: {e}")
-                await asyncio.sleep(1)
-
-        logger.error(f"Failed to establish voice connection after {MAX_RETRIES} attempts for guild {guild_id}")
-        return None
-
     async def ensure_voice_connection(self, voice_channel, guild_id: str) -> bool:
         MAX_RETRIES = 3
+        retry_delay = 1
+
         for attempt in range(MAX_RETRIES):
             try:
-                if voice_client := self.voice_clients.get(guild_id):
+                if voice_client := self.voice_clients_dict.get(guild_id):
                     if voice_client.is_connected():
                         if voice_client.channel != voice_channel:
                             await voice_client.move_to(voice_channel)
                         return True
                     else:
-                        self.voice_clients.pop(guild_id, None)
+                        self.voice_clients_dict.pop(guild_id, None)
 
                 voice_client = await voice_channel.connect(timeout=10.0)
-                self.voice_clients[guild_id] = voice_client
+                self.voice_clients_dict[guild_id] = voice_client
                 return True
 
             except Exception as e:
                 logger.error(f"Voice connection attempt {attempt + 1} failed: {e}")
                 if attempt < MAX_RETRIES - 1:
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
                 continue
 
         return False
@@ -648,11 +631,11 @@ class MusicBot(commands.Bot):
 
     async def voice_state_heartbeat(self):
         while True:
-            for guild_id, voice_client in list(self.voice_clients.items()):
+            for guild_id, voice_client in list(self.voice_clients_dict.items()):
                 try:
                     if not voice_client.is_connected():
                         logger.warning(f"Voice client disconnected for guild {guild_id}")
-                        self.voice_clients.pop(guild_id, None)
+                        self.voice_clients_dict.pop(guild_id, None)
                         await self.update_stable_message(guild_id)
                 except Exception as e:
                     logger.error(f"Error in voice heartbeat for guild {guild_id}: {e}")
@@ -667,17 +650,19 @@ class MusicBot(commands.Bot):
                 await self.cleanup_voice_state(guild_id)
 
         # Handle when bot is alone in channel
-        elif before.channel and (voice_client := self.voice_clients.get(guild_id)):
+        elif before.channel and (voice_client := self.voice_clients_dict.get(guild_id)):
             if voice_client.channel == before.channel and len(before.channel.members) == 1:
                 await self.cleanup_voice_state(guild_id)
 
     async def cleanup_voice_state(self, guild_id: str):
         async with self.guild_lock_timeout(guild_id):
-            if voice_client := self.voice_clients.get(guild_id):
+            if voice_client := self.voice_clients_dict.get(guild_id):
                 await voice_client.disconnect()
-                self.voice_clients.pop(guild_id, None)
+                self.voice_clients_dict.pop(guild_id, None)
             self.guilds_data[guild_id]['current_song'] = None
             if task := self.guilds_data[guild_id].get('disconnect_task'):
+                task.cancel()
+            if task := self.guilds_data[guild_id].get('progress_task'):
                 task.cancel()
             await self.update_stable_message(guild_id)
 
@@ -686,14 +671,16 @@ class MusicBot(commands.Bot):
         try:
             async with self.guild_lock_timeout(guild_id):
                 # Cleanup voice
-                if voice_client := self.voice_clients.get(guild_id):
+                if voice_client := self.voice_clients_dict.get(guild_id):
                     await voice_client.disconnect()
-                    self.voice_clients.pop(guild_id, None)
+                    self.voice_clients_dict.pop(guild_id, None)
 
                 # Cleanup queues and data
                 self.queues.pop(guild_id, None)
                 if guild_data := self.guilds_data.pop(guild_id, None):
                     if task := guild_data.get('disconnect_task'):
+                        task.cancel()
+                    if task := guild_data.get('progress_task'):
                         task.cancel()
 
                 await self.save_guilds_data()
@@ -708,151 +695,109 @@ class MusicControlView(View):
 
     @discord.ui.button(label='⏸️ Pause', style=ButtonStyle.primary)
     async def pause_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            await interaction.response.defer(ephemeral=True)
-            guild_id = str(interaction.guild.id)
+        await self.handle_interaction_safely(interaction, self.pause_action)
 
-            async with asyncio.timeout(5.0):
-                voice_client = self.bot.voice_clients.get(guild_id)
-                if voice_client and voice_client.is_playing():
-                    voice_client.pause()
-                    await interaction.followup.send('⏸️ Paused the music.', ephemeral=True)
-                else:
-                    await interaction.followup.send('❌ Nothing is playing.', ephemeral=True)
-                await self.bot.update_stable_message(guild_id)
-        except asyncio.TimeoutError:
-            await interaction.followup.send('⚠️ Operation timed out.', ephemeral=True)
-        except Exception as e:
-            logger.error(f"Error in pause button: {e}")
-            await interaction.followup.send('❌ An error occurred.', ephemeral=True)
+    async def pause_action(self):
+        guild_id = str(self.bot.user.guild.id)
+        voice_client = self.bot.voice_clients_dict.get(guild_id)
+        if voice_client and voice_client.is_connected() and voice_client.is_playing():
+            voice_client.pause()
+            return '⏸️ Paused the music.'
+        else:
+            return '❌ Nothing is playing.'
 
     @discord.ui.button(label='▶️ Resume', style=ButtonStyle.primary)
     async def resume_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            await interaction.response.defer(ephemeral=True)
-            guild_id = str(interaction.guild.id)
+        await self.handle_interaction_safely(interaction, self.resume_action)
 
-            async with asyncio.timeout(5.0):
-                voice_client = self.bot.voice_clients.get(guild_id)
-                if voice_client and voice_client.is_paused():
-                    voice_client.resume()
-                    await interaction.followup.send('▶️ Resumed the music.', ephemeral=True)
-                else:
-                    await interaction.followup.send('❌ Nothing is paused.', ephemeral=True)
-                await self.bot.update_stable_message(guild_id)
-        except asyncio.TimeoutError:
-            await interaction.followup.send('⚠️ Operation timed out.', ephemeral=True)
-        except Exception as e:
-            logger.error(f"Error in resume button: {e}")
-            await interaction.followup.send('❌ An error occurred.', ephemeral=True)
+    async def resume_action(self):
+        guild_id = str(self.bot.user.guild.id)
+        voice_client = self.bot.voice_clients_dict.get(guild_id)
+        if voice_client and voice_client.is_connected() and voice_client.is_paused():
+            voice_client.resume()
+            return '▶️ Resumed the music.'
+        else:
+            return '❌ Nothing is paused.'
 
     @discord.ui.button(label='⏭️ Skip', style=ButtonStyle.primary)
     async def skip_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            await interaction.response.defer(ephemeral=True)
-            guild_id = str(interaction.guild.id)
+        await self.handle_interaction_safely(interaction, self.skip_action)
 
-            async with asyncio.timeout(5.0):
-                voice_client = self.bot.voice_clients.get(guild_id)
-                if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
-                    voice_client.stop()
-                    await interaction.followup.send('⏭️ Skipped the song.', ephemeral=True)
-                else:
-                    await interaction.followup.send('❌ Nothing is playing.', ephemeral=True)
-                await self.bot.update_stable_message(guild_id)
-        except asyncio.TimeoutError:
-            await interaction.followup.send('⚠️ Operation timed out.', ephemeral=True)
-        except Exception as e:
-            logger.error(f"Error in skip button: {e}")
-            await interaction.followup.send('❌ An error occurred.', ephemeral=True)
+    async def skip_action(self):
+        guild_id = str(self.bot.user.guild.id)
+        voice_client = self.bot.voice_clients_dict.get(guild_id)
+        if voice_client and voice_client.is_connected() and (voice_client.is_playing() or voice_client.is_paused()):
+            voice_client.stop()
+            return '⏭️ Skipped the song.'
+        else:
+            return '❌ Nothing is playing.'
 
     @discord.ui.button(label='⏹️ Stop', style=ButtonStyle.primary)
     async def stop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            await interaction.response.defer(ephemeral=True)
-            guild_id = str(interaction.guild.id)
+        await self.handle_interaction_safely(interaction, self.stop_action)
 
-            async with asyncio.timeout(5.0):
-                voice_client = self.bot.voice_clients.get(guild_id)
-                if voice_client:
-                    voice_client.stop()
-                    await voice_client.disconnect()
-                    self.bot.voice_clients.pop(guild_id, None)
-                    self.bot.guilds_data[guild_id]['current_song'] = None
+    async def stop_action(self):
+        guild_id = str(self.bot.user.guild.id)
+        voice_client = self.bot.voice_clients_dict.get(guild_id)
+        if voice_client:
+            await voice_client.disconnect()
+            self.bot.voice_clients_dict.pop(guild_id, None)
+            self.bot.guilds_data[guild_id]['current_song'] = None
 
-                    # Cancel the disconnect task if it exists
-                    disconnect_task = self.bot.guilds_data[guild_id].get('disconnect_task')
-                    if disconnect_task:
-                        disconnect_task.cancel()
-                        self.bot.guilds_data[guild_id]['disconnect_task'] = None
+            # Cancel the disconnect task if it exists
+            disconnect_task = self.bot.guilds_data[guild_id].get('disconnect_task')
+            if disconnect_task:
+                disconnect_task.cancel()
+                self.bot.guilds_data[guild_id]['disconnect_task'] = None
 
-                    # Reset playback mode to NORMAL
-                    self.bot.playback_modes[guild_id] = PlaybackMode.NORMAL
+            # Reset playback mode to NORMAL
+            self.bot.playback_modes[guild_id] = PlaybackMode.NORMAL
 
-                    await interaction.followup.send('⏹️ Stopped the music and left the voice channel.', ephemeral=True)
-                else:
-                    await interaction.followup.send('❌ Not connected to a voice channel.', ephemeral=True)
-                await self.bot.update_stable_message(guild_id)
-        except asyncio.TimeoutError:
-            await interaction.followup.send('⚠️ Operation timed out.', ephemeral=True)
-        except Exception as e:
-            logger.error(f"Error in stop button: {e}")
-            await interaction.followup.send('❌ An error occurred.', ephemeral=True)
+            return '⏹️ Stopped the music and left the voice channel.'
+        else:
+            return '❌ Not connected to a voice channel.'
 
     @discord.ui.button(label='🗑️ Clear Queue', style=ButtonStyle.danger)
     async def clear_queue_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            await interaction.response.defer(ephemeral=True)
-            guild_id = str(interaction.guild.id)
-            if guild_id in self.bot.queues:
-                await self.bot.queues[guild_id].clear()
-                await interaction.followup.send('🗑️ Cleared the queue.', ephemeral=True)
-            else:
-                await interaction.followup.send('❌ The queue is already empty.', ephemeral=True)
-            await self.bot.update_stable_message(guild_id)
-        except Exception as e:
-            logger.error(f"Error in clear queue button: {e}")
-            await interaction.followup.send('❌ An error occurred.', ephemeral=True)
+        await self.handle_interaction_safely(interaction, self.clear_queue_action)
 
-    # Separate buttons for playback modes
+    async def clear_queue_action(self):
+        guild_id = str(self.bot.user.guild.id)
+        if guild_id in self.bot.queues:
+            await self.bot.queues[guild_id].clear()
+            return '🗑️ Cleared the queue.'
+        else:
+            return '❌ The queue is already empty.'
+
     @discord.ui.button(label='🔁 Normal', style=ButtonStyle.secondary)
     async def normal_mode_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            await interaction.response.defer(ephemeral=True)
-            guild_id = str(interaction.guild.id)
-            self.bot.playback_modes[guild_id] = PlaybackMode.NORMAL
-            await interaction.followup.send('Playback mode set to: **Normal**', ephemeral=True)
-            await self.bot.update_stable_message(guild_id)
-        except Exception as e:
-            logger.error(f"Error in normal mode button: {e}")
-            await interaction.followup.send('❌ An error occurred.', ephemeral=True)
+        await self.handle_interaction_safely(interaction, self.set_normal_mode)
+
+    async def set_normal_mode(self):
+        guild_id = str(self.bot.user.guild.id)
+        self.bot.playback_modes[guild_id] = PlaybackMode.NORMAL
+        return 'Playback mode set to: **Normal**'
 
     @discord.ui.button(label='🔂 Repeat', style=ButtonStyle.secondary)
     async def repeat_one_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            await interaction.response.defer(ephemeral=True)
-            guild_id = str(interaction.guild.id)
-            self.bot.playback_modes[guild_id] = PlaybackMode.REPEAT_ONE
-            await interaction.followup.send('Playback mode set to: **Repeat**', ephemeral=True)
-            await self.bot.update_stable_message(guild_id)
-        except Exception as e:
-            logger.error(f"Error in repeat mode button: {e}")
-            await interaction.followup.send('❌ An error occurred.', ephemeral=True)
+        await self.handle_interaction_safely(interaction, self.set_repeat_mode)
+
+    async def set_repeat_mode(self):
+        guild_id = str(self.bot.user.guild.id)
+        self.bot.playback_modes[guild_id] = PlaybackMode.REPEAT_ONE
+        return 'Playback mode set to: **Repeat**'
 
     @discord.ui.button(label='🔀 Shuffle', style=ButtonStyle.primary)
     async def shuffle_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            await interaction.response.defer(ephemeral=True)
-            guild_id = str(interaction.guild.id)
-            if guild_id in self.bot.queues:
-                await self.bot.queues[guild_id].shuffle()
-                await interaction.followup.send('🔀 Queue shuffled.', ephemeral=True)
-            else:
-                await interaction.followup.send('❌ The queue is empty.', ephemeral=True)
-            await self.bot.update_stable_message(guild_id)
-        except Exception as e:
-            logger.error(f"Error in shuffle button: {e}")
-            await interaction.followup.send('❌ An error occurred.', ephemeral=True)
+        await self.handle_interaction_safely(interaction, self.shuffle_queue_action)
+
+    async def shuffle_queue_action(self):
+        guild_id = str(self.bot.user.guild.id)
+        if guild_id in self.bot.queues:
+            await self.bot.queues[guild_id].shuffle()
+            return '🔀 Queue shuffled.'
+        else:
+            return '❌ The queue is empty.'
 
     @discord.ui.button(label='➕ Add Song', style=ButtonStyle.success)
     async def add_song_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -864,13 +809,25 @@ class MusicControlView(View):
         modal = AddSongModal(interaction, self.bot, play_next=True)
         await interaction.response.send_modal(modal)
 
-    # Update Remove button to use Modal
     @discord.ui.button(label='❌ Remove', style=ButtonStyle.danger)
     async def remove_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         modal = RemoveSongModal(interaction, self.bot)
         await interaction.response.send_modal(modal)
 
-# Create the AddSongModal class
+    async def handle_interaction_safely(self, interaction: discord.Interaction, action):
+        try:
+            await interaction.response.defer(ephemeral=True)
+            async with asyncio.timeout(5.0):
+                result = await action()
+            await interaction.followup.send(result, ephemeral=True)
+            guild_id = str(interaction.guild.id)
+            await self.bot.update_stable_message(guild_id)
+        except asyncio.TimeoutError:
+            await interaction.followup.send('⚠️ Operation timed out.', ephemeral=True)
+        except Exception as e:
+            logger.exception(f"Error handling interaction: {e}")
+            await interaction.followup.send('❌ An error occurred.', ephemeral=True)
+
 class AddSongModal(Modal):
     def __init__(self, interaction: discord.Interaction, bot, play_next=False):
         title = "Play Next" if play_next else "Add Song"
@@ -919,12 +876,11 @@ class AddSongModal(Modal):
                 content="⚠️ Request timed out. Please try again."
             )
         except Exception as e:
-            logger.error(f"Modal submission error: {e}")
+            logger.exception(f"Modal submission error: {e}")
             await interaction.edit_original_response(
                 content="❌ An error occurred while processing your request."
             )
 
-# Create the RemoveSongModal class
 class RemoveSongModal(Modal):
     def __init__(self, interaction: discord.Interaction, bot):
         super().__init__(title="Remove Song")
@@ -940,8 +896,10 @@ class RemoveSongModal(Modal):
     async def on_submit(self, interaction: discord.Interaction):
         try:
             index = self.song_index.value.strip()
-            guild_id = str(interaction.guild.id)
             index = int(index) - 1  # Convert to 0-based index
+            if index < 0:
+                raise ValueError("Index cannot be negative.")
+            guild_id = str(interaction.guild.id)
             removed_song = await self.bot.remove_from_queue(guild_id, index)
             if removed_song:
                 await interaction.response.send_message(f'❌ Removed **{removed_song["title"]}** from the queue.', ephemeral=True)
@@ -949,9 +907,9 @@ class RemoveSongModal(Modal):
             else:
                 await interaction.response.send_message('❌ Invalid song index.', ephemeral=True)
         except ValueError:
-            await interaction.response.send_message('❌ Please enter a valid number.', ephemeral=True)
+            await interaction.response.send_message('❌ Please enter a valid positive number.', ephemeral=True)
         except Exception as e:
-            logger.error(f"Error in RemoveSongModal: {e}")
+            logger.exception(f"Error in RemoveSongModal: {e}")
             await interaction.response.send_message('❌ An error occurred.', ephemeral=True)
 
 class MusicCog(commands.Cog):
@@ -1002,7 +960,7 @@ class MusicCog(commands.Cog):
             # Schedule deletion of the interaction response
             await self.delete_interaction_message(interaction)
         except Exception as e:
-            logger.error(f"Error in play_command: {e}")
+            logger.exception(f"Error in play_command: {e}")
             await interaction.followup.send('❌ An error occurred while processing your request.')
 
     @discord.app_commands.command(name="playnext", description="Play a song next")
@@ -1016,10 +974,9 @@ class MusicCog(commands.Cog):
             # Schedule deletion of the interaction response
             await self.delete_interaction_message(interaction)
         except Exception as e:
-            logger.error(f"Error in playnext_command: {e}")
+            logger.exception(f"Error in playnext_command: {e}")
             await interaction.followup.send('❌ An error occurred while processing your request.')
 
-    # Helper function to delete interaction messages
     async def delete_interaction_message(self, interaction):
         try:
             # Fetch the interaction message
@@ -1028,22 +985,32 @@ class MusicCog(commands.Cog):
             await asyncio.sleep(5)  # Wait 5 seconds before deleting
             await message.delete()
         except Exception as e:
-            logger.error(f"Error deleting interaction message: {e}")
+            logger.exception(f"Error deleting interaction message: {e}")
 
     @discord.app_commands.command(name="skip", description="Skip the current song")
     async def skip_command(self, interaction: discord.Interaction):
         try:
             guild_id = str(interaction.guild.id)
-            voice_client = self.bot.voice_clients.get(guild_id)
-            if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
+            voice_client = self.bot.voice_clients_dict.get(guild_id)
+            if voice_client and voice_client.is_connected() and (voice_client.is_playing() or voice_client.is_paused()):
                 voice_client.stop()
                 await interaction.response.send_message('⏭️ Skipped the song.')
             else:
                 await interaction.response.send_message('❌ Nothing is playing.')
             await self.bot.update_stable_message(guild_id)
         except Exception as e:
-            logger.error(f"Error in skip_command: {e}")
+            logger.exception(f"Error in skip_command: {e}")
             await interaction.response.send_message('❌ An error occurred while processing your request.')
+
+    @commands.Cog.listener()
+    async def on_command_error(self, ctx, error):
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send("❌ You don't have permission to use this command.")
+        elif isinstance(error, commands.BotMissingPermissions):
+            await ctx.send("❌ I don't have the required permissions to perform this action.")
+        else:
+            logger.exception(f"An error occurred: {error}")
+            await ctx.send("❌ An unexpected error occurred. Please try again later.")
 
 async def main():
     client = MusicBot()
