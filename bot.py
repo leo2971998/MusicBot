@@ -115,8 +115,9 @@ class MusicBot(commands.Bot):
         self.playback_modes = {}
         self.data_lock = Lock()
         self.active_tasks = set()
-        self.voice_state_heartbeat_task = self.loop.create_task(self.voice_state_heartbeat())
 
+    async def setup_hook(self):
+        self.voice_state_heartbeat_task = self.loop.create_task(self.voice_state_heartbeat())
     def get_guild_lock(self, guild_id):
         if guild_id not in self.guild_locks:
             self.guild_locks[guild_id] = Lock()
