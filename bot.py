@@ -68,12 +68,12 @@ def format_time(seconds: int) -> str:
     seconds = seconds % 60
     return f"{minutes:02d}:{seconds:02d}"
 
-class GuildQueue:
+class ThreadSafeQueue:
     def __init__(self):
         self._queue = []
         self._lock = asyncio.Lock()
 
-    async def add(self, item, position=None) -> bool:
+    async def add(self, item, position=None):
         async with self._lock:
             if len(self._queue) >= MAX_QUEUE_SIZE:
                 return False
@@ -87,8 +87,7 @@ class GuildQueue:
         async with self._lock:
             if 0 <= index < len(self._queue):
                 return self._queue.pop(index)
-            else:
-                return None
+            return None
 
     async def clear(self):
         async with self._lock:
@@ -101,6 +100,10 @@ class GuildQueue:
     async def shuffle(self):
         async with self._lock:
             random.shuffle(self._queue)
+
+    async def __len__(self):
+        async with self._lock:
+            return len(self._queue)
 
 class MusicBot(commands.Bot):
     def __init__(self, *args, **kwargs):
@@ -370,60 +373,67 @@ class MusicBot(commands.Bot):
 
     async def play_song(self, guild_id, song_info):
         guild_id = str(guild_id)
-        async with self.guild_lock_timeout(guild_id):
-            voice_client = self.voice_clients_dict.get(guild_id)
+        try:
+            async with self.guild_lock_timeout(guild_id):
+                voice_client = self.voice_clients_dict.get(guild_id)
 
-            if not voice_client or not voice_client.is_connected():
-                logger.error(f"No voice client for guild {guild_id}")
-                return
+                if not voice_client or not voice_client.is_connected():
+                    logger.error(f"No voice client for guild {guild_id}")
+                    await self.play_next(guild_id)
+                    return
 
-            # Cancel any scheduled disconnect task
-            await self.cancel_disconnect_task(guild_id)
+                # Cancel any scheduled disconnect task
+                await self.cancel_disconnect_task(guild_id)
 
-            song_url = song_info.get('url')
-            if not song_url and 'formats' in song_info:
-                # Get the best audio format
-                for fmt in song_info['formats']:
-                    if fmt.get('acodec') != 'none':
-                        song_url = fmt['url']
-                        break
-            if not song_url:
-                logger.error(f"No valid audio URL found for {song_info.get('title')}")
-                return
+                song_url = song_info.get('url')
+                if not song_url and 'formats' in song_info:
+                    # Get the best audio format
+                    for fmt in song_info['formats']:
+                        if fmt.get('acodec') != 'none':
+                            song_url = fmt['url']
+                            break
+                if not song_url:
+                    logger.error(f"No valid audio URL found for {song_info.get('title')}")
+                    await self.play_next(guild_id)
+                    return
 
-            # Stop any currently playing audio
-            if voice_client.is_playing() or voice_client.is_paused():
-                voice_client.stop()
+                # Stop any currently playing audio
+                if voice_client.is_playing() or voice_client.is_paused():
+                    voice_client.stop()
 
-            try:
-                player = discord.FFmpegPCMAudio(song_url, **ffmpeg_options)
-            except Exception as e:
-                logger.exception(f"Error creating FFmpegPCMAudio: {e}")
-                return
-
-            def after_playing(error):
-                if error:
-                    logger.error(f"Error occurred while playing: {error}")
-                future = asyncio.run_coroutine_threadsafe(self.play_next(guild_id), self.loop)
                 try:
-                    future.result()
+                    player = discord.FFmpegPCMAudio(song_url, **ffmpeg_options)
                 except Exception as e:
-                    logger.error(f"Error in play_next: {e}")
+                    logger.exception(f"Error creating FFmpegPCMAudio: {e}")
+                    await self.play_next(guild_id)
+                    return
 
-            voice_client.play(
-                player,
-                after=after_playing
-            )
-            channel_id = self.guilds_data[guild_id]['channel_id']
-            channel = self.get_channel(int(channel_id))
-            await channel.send(f"🎶 Now playing: **{song_info.get('title', 'Unknown title')}**")
-            self.guilds_data[guild_id]['current_song'] = song_info
+                def after_playing(error):
+                    if error:
+                        logger.error(f"Error occurred while playing: {error}")
+                    future = asyncio.run_coroutine_threadsafe(self.play_next(guild_id), self.loop)
+                    try:
+                        future.result()
+                    except Exception as e:
+                        logger.error(f"Error in play_next: {e}")
 
-            # Record the song duration
-            self.guilds_data[guild_id]['song_duration'] = song_info.get('duration', 0)
+                voice_client.play(
+                    player,
+                    after=after_playing
+                )
+                channel_id = self.guilds_data[guild_id]['channel_id']
+                channel = self.get_channel(int(channel_id))
+                await channel.send(f"🎶 Now playing: **{song_info.get('title', 'Unknown title')}**")
+                self.guilds_data[guild_id]['current_song'] = song_info
 
-            await self.update_stable_message(guild_id)
-            await self.save_guilds_data()
+                # Record the song duration
+                self.guilds_data[guild_id]['song_duration'] = song_info.get('duration', 0)
+
+                await self.update_stable_message(guild_id)
+                await self.save_guilds_data()
+        except Exception as e:
+            logger.exception(f"Error in play_song: {e}")
+            await self.play_next(guild_id)
 
     async def process_play_request(self, user, guild, channel, link, interaction=None, play_next=False):
         guild_id = str(guild.id)
@@ -539,7 +549,7 @@ class MusicBot(commands.Bot):
                 data = await self.loop.run_in_executor(None, lambda: ytdl.extract_info(query, download=False))
                 return data
         except yt_dlp.DownloadError as e:
-            logger.error(f"YouTube-DL error: {e}")
+            logger.error(f"yt_dlp error: {e}")
             raise ValueError(f"Failed to fetch video information: {str(e)}")
         except Exception as e:
             logger.error(f"Unexpected error in extract_song_info: {e}")
@@ -547,7 +557,7 @@ class MusicBot(commands.Bot):
 
     async def add_to_queue(self, guild_id: str, song_info: dict, play_next: bool = False) -> bool:
         if guild_id not in self.queues:
-            self.queues[guild_id] = GuildQueue()
+            self.queues[guild_id] = ThreadSafeQueue()
         queue = self.queues[guild_id]
         if play_next:
             return await queue.add(song_info, position=0)
@@ -587,10 +597,12 @@ class MusicBot(commands.Bot):
         except asyncio.CancelledError:
             # The task was cancelled, do nothing
             pass
+        except Exception as e:
+            logger.error(f"Error in disconnect_after_delay for guild {guild_id}: {e}")
 
     async def ensure_voice_connection(self, voice_channel, guild_id: str) -> bool:
         MAX_RETRIES = 3
-        retry_delay = 1
+        retry_delay = 1.0
 
         for attempt in range(MAX_RETRIES):
             try:
@@ -607,7 +619,7 @@ class MusicBot(commands.Bot):
                 return True
 
             except Exception as e:
-                logger.error(f"Voice connection attempt {attempt + 1} failed: {e}")
+                logger.error(f"Voice connection attempt {attempt + 1} failed for guild {guild_id}: {e}")
                 if attempt < MAX_RETRIES - 1:
                     await asyncio.sleep(retry_delay)
                     retry_delay *= 2
@@ -642,41 +654,73 @@ class MusicBot(commands.Bot):
             await asyncio.sleep(30)  # Check every 30 seconds
 
     async def on_voice_state_update(self, member, before, after):
-        guild_id = str(member.guild.id)
+        try:
+            guild_id = str(member.guild.id)
+            voice_client = self.voice_clients_dict.get(guild_id)
 
-        # Handle bot disconnection
-        if member.id == self.user.id and after.channel is None:
-            async with self.guild_lock_timeout(guild_id):
+            # Bot was disconnected
+            if member.id == self.user.id and after.channel is None:
                 await self.cleanup_voice_state(guild_id)
 
-        # Handle when bot is alone in channel
-        elif before.channel and (voice_client := self.voice_clients_dict.get(guild_id)):
-            if voice_client.channel == before.channel and len(before.channel.members) == 1:
-                await self.cleanup_voice_state(guild_id)
+            # Check if bot is alone in channel
+            elif before.channel and voice_client and voice_client.channel == before.channel:
+                if len([m for m in before.channel.members if not m.bot]) == 0:
+                    await self.cleanup_voice_state(guild_id)
+
+        except Exception as e:
+            logger.error(f"Error in voice state update: {e}")
 
     async def cleanup_voice_state(self, guild_id: str):
-        async with self.guild_lock_timeout(guild_id):
-            if voice_client := self.voice_clients_dict.get(guild_id):
-                await voice_client.disconnect()
-                self.voice_clients_dict.pop(guild_id, None)
-            self.guilds_data[guild_id]['current_song'] = None
-            if task := self.guilds_data[guild_id].get('disconnect_task'):
-                task.cancel()
-            if task := self.guilds_data[guild_id].get('progress_task'):
-                task.cancel()
-            await self.update_stable_message(guild_id)
+        try:
+            async with self.guild_lock_timeout(guild_id):
+                if voice_client := self.voice_clients_dict.pop(guild_id, None):
+                    try:
+                        if voice_client.is_playing():
+                            voice_client.stop()
+                        if voice_client.is_connected():
+                            await voice_client.disconnect()
+                    except Exception as e:
+                        logger.error(f"Error disconnecting voice client: {e}")
+
+                # Clean up guild data
+                guild_data = self.guilds_data.get(guild_id, {})
+                if guild_data:
+                    if task := guild_data.get('disconnect_task'):
+                        task.cancel()
+                    if task := guild_data.get('progress_task'):
+                        task.cancel()
+                    guild_data['current_song'] = None
+                    guild_data['disconnect_task'] = None
+                    guild_data['progress_task'] = None
+
+                # Reset playback mode
+                self.playback_modes[guild_id] = PlaybackMode.NORMAL
+
+                # Clear queue
+                if guild_id in self.queues:
+                    await self.queues[guild_id].clear()
+
+                await self.update_stable_message(guild_id)
+                await self.save_guilds_data()
+
+        except Exception as e:
+            logger.error(f"Error in cleanup_voice_state: {e}")
 
     async def on_guild_remove(self, guild):
         guild_id = str(guild.id)
         try:
             async with self.guild_lock_timeout(guild_id):
                 # Cleanup voice
-                if voice_client := self.voice_clients_dict.get(guild_id):
-                    await voice_client.disconnect()
-                    self.voice_clients_dict.pop(guild_id, None)
+                if voice_client := self.voice_clients_dict.pop(guild_id, None):
+                    try:
+                        await voice_client.disconnect()
+                    except Exception as e:
+                        logger.error(f"Error disconnecting voice client for guild {guild_id}: {e}")
 
                 # Cleanup queues and data
-                self.queues.pop(guild_id, None)
+                if guild_id in self.queues:
+                    await self.queues[guild_id].clear()
+                    self.queues.pop(guild_id, None)
                 if guild_data := self.guilds_data.pop(guild_id, None):
                     if task := guild_data.get('disconnect_task'):
                         task.cancel()
@@ -686,6 +730,10 @@ class MusicBot(commands.Bot):
                 await self.save_guilds_data()
         except Exception as e:
             logger.error(f"Error cleaning up guild {guild_id}: {e}")
+
+    async def on_error(self, event, *args, **kwargs):
+        logger.error(f"Error in event {event}: {args} {kwargs}")
+        logger.exception("Exception occurred")
 
 class MusicControlView(View):
     def __init__(self, queue, bot):
@@ -844,11 +892,13 @@ class AddSongModal(Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
-            # Send immediate response
-            await interaction.response.send_message("Processing your request...", ephemeral=True)
-
+            await interaction.response.defer(ephemeral=True)
             async with asyncio.timeout(15.0):
                 song_name_or_url = self.song_input.value.strip()
+                if not song_name_or_url:
+                    await interaction.followup.send("❌ Please provide a song name or URL.", ephemeral=True)
+                    return
+
                 response_message = await self.bot.process_play_request(
                     interaction.user,
                     interaction.guild,
@@ -858,28 +908,14 @@ class AddSongModal(Modal):
                     play_next=self.play_next
                 )
 
-            # Update the response
-            await interaction.edit_original_response(content=response_message)
-
-            # Clear messages except the stable message
-            guild_id = str(interaction.guild.id)
-            guild_data = self.bot.guilds_data.get(guild_id)
-            if guild_data:
-                stable_message_id = guild_data.get('stable_message_id')
-                channel_id = guild_data.get('channel_id')
-                if stable_message_id and channel_id:
-                    channel = self.bot.get_channel(int(channel_id))
-                    await self.bot.clear_channel_messages(channel, int(stable_message_id))
+                if response_message:
+                    await interaction.followup.send(response_message, ephemeral=True)
 
         except asyncio.TimeoutError:
-            await interaction.edit_original_response(
-                content="⚠️ Request timed out. Please try again."
-            )
+            await interaction.followup.send("⚠️ Request timed out. Please try again.", ephemeral=True)
         except Exception as e:
             logger.exception(f"Modal submission error: {e}")
-            await interaction.edit_original_response(
-                content="❌ An error occurred while processing your request."
-            )
+            await interaction.followup.send("❌ An error occurred while processing your request.", ephemeral=True)
 
 class RemoveSongModal(Modal):
     def __init__(self, interaction: discord.Interaction, bot):
