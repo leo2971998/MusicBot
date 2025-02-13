@@ -447,7 +447,6 @@ async def update_stable_message(guild_id):
 
     stable_message = guild_data.get('stable_message')
     if not stable_message:
-        # Try to recreate the stable message if it doesn't exist
         try:
             stable_message = await channel.send('🎶 **Music Bot UI Initialized** 🎶')
             guild_data['stable_message'] = stable_message
@@ -457,13 +456,20 @@ async def update_stable_message(guild_id):
             print(f"Failed to recreate stable message: {e}")
             return
 
+    # Create a credits embed (this will appear as a panel on top)
+    credits_embed = Embed(
+        title="Music Bot UI",
+        description="Made by **Leo Nguyen**",
+        color=0x1db954
+    )
+
     # Build the "Now Playing" embed
     queue = queues.get(guild_id, [])
     voice_client = voice_clients.get(guild_id)
 
     if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
         current_song = guild_data.get('current_song')
-        duration = guild_data.get('song_duration')
+        duration = guild_data.get('song_duration', 0)
         duration_str = format_time(duration)
 
         now_playing_embed = Embed(
@@ -473,10 +479,8 @@ async def update_stable_message(guild_id):
         )
         now_playing_embed.set_thumbnail(url=current_song.get('thumbnail'))
         now_playing_embed.add_field(name='Duration', value=f"`{duration_str}`", inline=False)
-        # Add requester
         now_playing_embed.add_field(name='Requested by', value=current_song.get('requester', 'Unknown'), inline=False)
 
-        # Add playback mode
         playback_mode = client.playback_modes.get(guild_id, PlaybackMode.NORMAL)
         now_playing_embed.set_footer(text=f'Playback Mode: {playback_mode.value}')
     else:
@@ -489,10 +493,8 @@ async def update_stable_message(guild_id):
     # Build the "Queue" embed
     if queue:
         queue_description = '\n'.join(
-            [
-                f"{idx + 1}. **[{song['title']}]({song['webpage_url']})** — *{song.get('requester', 'Unknown')}*"
-                for idx, song in enumerate(queue)
-            ]
+            f"{idx + 1}. **[{song['title']}]({song['webpage_url']})** — *{song.get('requester', 'Unknown')}*"
+            for idx, song in enumerate(queue)
         )
     else:
         queue_description = 'No songs in the queue.'
@@ -507,13 +509,16 @@ async def update_stable_message(guild_id):
     # Create the MusicControlView
     view = MusicControlView(queue)
 
+    # Now update the stable message with our three embeds:
+    # 1. The credits panel on top
+    # 2. The now playing info
+    # 3. The queue information
     try:
-        await stable_message.edit(content=None, embeds=[now_playing_embed, queue_embed], view=view)
+        await stable_message.edit(embeds=[credits_embed, now_playing_embed, queue_embed], view=view)
     except discord.HTTPException as e:
         print(f"Error updating stable message in guild {guild_id}: {e}")
 
     save_guilds_data()
-
 # Clear messages in the channel except the stable message
 async def clear_channel_messages(channel, stable_message_id):
     if not stable_message_id:
