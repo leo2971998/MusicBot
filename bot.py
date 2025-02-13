@@ -361,7 +361,9 @@ class AddSongModal(Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         song_name_or_url = self.song_input.value.strip()
+        # Defer to allow time for processing
         await interaction.response.defer(thinking=True)
+
         response_message = await process_play_request(
             interaction.user,
             interaction.guild,
@@ -370,10 +372,18 @@ class AddSongModal(Modal):
             interaction=interaction,
             play_next=self.play_next
         )
-        if response_message:
-            await interaction.followup.send(response_message)
 
-        # Clear messages except the stable message
+        # Try sending a followup message and catch NotFound errors.
+        if response_message:
+            try:
+                await interaction.followup.send(response_message)
+            except discord.errors.NotFound:
+                # The interaction message was not found.
+                print("Interaction message not found. Followup message could not be sent.")
+            except Exception as e:
+                print(f"Unexpected error sending followup: {e}")
+
+        # Delay clearing messages to ensure the followup is sent and visible.
         guild_id = str(interaction.guild.id)
         guild_data = client.guilds_data.get(guild_id)
         if guild_data:
@@ -381,6 +391,8 @@ class AddSongModal(Modal):
             channel_id = guild_data.get('channel_id')
             if stable_message_id and channel_id:
                 channel = client.get_channel(int(channel_id))
+                # Wait a bit before clearing to prevent premature deletion.
+                await asyncio.sleep(5)
                 await clear_channel_messages(channel, int(stable_message_id))
 
 # Modal for removing a song
