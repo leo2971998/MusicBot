@@ -175,7 +175,97 @@ def get_song_icon(song):
         return "🎧"
     else:
         return "📺"
+async def update_stable_message(guild_id):
+    guild_id = str(guild_id)
+    guild_data = client.guilds_data.get(guild_id)
+    if not guild_data:
+        return
 
+    channel_id = guild_data.get('channel_id')
+    if not channel_id:
+        return
+
+    channel = client.get_channel(int(channel_id))
+    if not channel:
+        return
+
+    stable_message = guild_data.get('stable_message')
+    if not stable_message:
+        try:
+            stable_message = await channel.send('🎶 **Music Bot UI Initialized** 🎶')
+            guild_data['stable_message'] = stable_message
+            guild_data['stable_message_id'] = stable_message.id
+            save_guilds_data()
+        except Exception as e:
+            print(f"Failed to recreate stable message: {e}")
+            return
+
+    # Build the embeds for the UI
+    credits_embed = Embed(
+        title="Music Bot UI",
+        description="Made by **Leo Nguyen**",
+        color=0x1db954
+    )
+
+    queue = queues.get(guild_id, [])
+    voice_client = voice_clients.get(guild_id)
+
+    if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
+        current_song = guild_data.get('current_song')
+        duration = guild_data.get('song_duration', 0)
+        duration_str = format_time(duration)
+        # Use a different color/title based on source
+        if current_song.get('source') == 'spotify':
+            now_title = "🎶 Now Playing (Spotify)"
+            color = 0x1db954  # Spotify green
+        else:
+            now_title = "🎶 Now Playing (YouTube)"
+            color = 0xff0000  # YouTube red (for example)
+
+        now_playing_embed = Embed(
+            title=now_title,
+            description=f"**[{current_song['title']}]({current_song.get('spotify_url', current_song.get('webpage_url'))})**",
+            color=color
+        )
+        if current_song.get('thumbnail'):
+            now_playing_embed.set_thumbnail(url=current_song['thumbnail'])
+        now_playing_embed.add_field(name='Duration', value=duration_str, inline=False)
+        now_playing_embed.add_field(name='Requested by', value=current_song.get('requester', 'Unknown'), inline=False)
+        playback_mode = client.playback_modes.get(guild_id, PlaybackMode.NORMAL)
+        now_playing_embed.set_footer(text=f'Playback Mode: {playback_mode.value}')
+    else:
+        now_playing_embed = Embed(
+            title='🎶 Now Playing',
+            description='No music is currently playing.',
+            color=0x1db954
+        )
+
+    # Build queue embed with icons to indicate source
+    def get_song_icon(song):
+        return "🎧" if song.get("source") == "spotify" else "📺"
+
+    if queue:
+        queue_description = "\n".join(
+            f"{idx+1}. {get_song_icon(song)} **[{song['title']}]({song.get('spotify_url', song.get('webpage_url'))})** — *{song.get('requester','Unknown')}*"
+            for idx, song in enumerate(queue)
+        )
+    else:
+        queue_description = "No songs in the queue."
+
+    queue_embed = Embed(
+        title="📜 Current Queue",
+        description=queue_description,
+        color=0x1db954
+    )
+    queue_embed.set_footer(text=f"Total songs in queue: {len(queue)}")
+
+    view = MusicControlView(queue)
+    try:
+        await stable_message.edit(embeds=[credits_embed, now_playing_embed, queue_embed], view=view)
+    except discord.HTTPException as e:
+        print(f"Error updating stable message in guild {guild_id}: {e}")
+
+    save_guilds_data()
 # Bot ready event
 @client.event
 async def on_ready():
