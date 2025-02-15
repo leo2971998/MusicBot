@@ -9,10 +9,60 @@ from dotenv import load_dotenv
 import json
 import random
 from enum import Enum
+import base64
+import time
+import requests
 
 # Load the environment variables
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN") or "YOUR_DISCORD_BOT_TOKEN"
+
+# Spotify credentials from .env
+SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
+SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
+
+# Global variables for Spotify token caching
+spotify_access_token = None
+spotify_token_expiry = 0
+
+def get_spotify_token():
+    global spotify_access_token, spotify_token_expiry
+    if spotify_access_token and time.time() < spotify_token_expiry:
+        return spotify_access_token
+
+    token_url = "https://accounts.spotify.com/api/token"
+    auth_str = f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}"
+    b64_auth_str = base64.b64encode(auth_str.encode()).decode()
+    headers = {
+        "Authorization": f"Basic {b64_auth_str}"
+    }
+    data = {
+        "grant_type": "client_credentials"
+    }
+    response = requests.post(token_url, headers=headers, data=data)
+    if response.status_code != 200:
+        raise Exception("Could not authenticate with Spotify")
+    token_info = response.json()
+    spotify_access_token = token_info.get("access_token")
+    expires_in = token_info.get("expires_in")
+    spotify_token_expiry = time.time() + expires_in - 10  # refresh a few seconds early
+    return spotify_access_token
+
+def search_spotify_track(query):
+    token = get_spotify_token()
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+    search_url = "https://api.spotify.com/v1/search"
+    params = {
+        "q": query,
+        "type": "track",
+        "limit": 5
+    }
+    response = requests.get(search_url, headers=headers, params=params)
+    if response.status_code != 200:
+        return None
+    return response.json()
 
 # Set up bot intents and command prefix
 intents = discord.Intents.default()
@@ -23,7 +73,6 @@ intents.voice_states = True  # Required for voice channel handling
 
 client = commands.Bot(command_prefix=".", intents=intents)
 # Access slash commands via client.tree
-# client.tree is a special command tree used for app commands
 client.guilds_data = {}
 
 # Define playback modes using Enum
@@ -58,8 +107,6 @@ yt_dl_options = {
 ytdl = yt_dlp.YoutubeDL(yt_dl_options)
 
 # FFmpeg options for audio playback
-# -re reads input in real-time, plus reconnect options for streaming stability
-# -b:a 192k to ensure a stable bitrate
 ffmpeg_options = {
     'before_options': '-re -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn -b:a 192k'
@@ -71,7 +118,6 @@ DATA_FILE = 'guilds_data.json'
 def save_guilds_data():
     serializable_data = {}
     for guild_id, guild_data in client.guilds_data.items():
-        # Create a copy excluding non-serializable items
         data_to_save = guild_data.copy()
         data_to_save.pop('stable_message', None)
         data_to_save.pop('progress_task', None)
@@ -90,11 +136,9 @@ def load_guilds_data():
             try:
                 data = json.load(f)
                 client.guilds_data = data.get('guilds_data', {})
-                # Map old playback modes to new ones if needed
                 old_playback_modes = data.get('playback_modes', {})
                 client.playback_modes = {}
                 for gid, mode in old_playback_modes.items():
-                    # If previously 'repeat', treat it as 'repeat_one'
                     if mode == 'repeat':
                         client.playback_modes[gid] = PlaybackMode.REPEAT_ONE
                     else:
@@ -118,7 +162,6 @@ def is_setup():
     async def predicate(interaction: discord.Interaction):
         guild_id = str(interaction.guild_id)
         guild_data = client.guilds_data.get(guild_id)
-        # If there's no record or channel_id is missing, setup isn't complete
         if not guild_data or not guild_data.get('channel_id'):
             await interaction.response.send_message(
                 "❌ Please run /setup to initialize the music channel first.", 
@@ -134,28 +177,23 @@ async def on_ready():
     load_guilds_data()
     print(f'{client.user} is now jamming!')
 
-    # Validate existing guild data, remove or fix invalid references
     for guild_id in list(client.guilds_data.keys()):
         guild_data = client.guilds_data[guild_id]
         guild = client.get_guild(int(guild_id))
-        # If the guild no longer exists or the bot isn't in it
         if not guild:
             del client.guilds_data[guild_id]
             continue
 
         channel_id = guild_data.get('channel_id')
         if not channel_id:
-            # Missing channel_id => not set up properly
             del client.guilds_data[guild_id]
             continue
 
         channel = guild.get_channel(int(channel_id))
         if not channel:
-            # The channel was deleted
             del client.guilds_data[guild_id]
             continue
 
-        # Attempt to fetch the stable message
         stable_message_id = guild_data.get('stable_message_id')
         if stable_message_id:
             try:
@@ -167,17 +205,14 @@ async def on_ready():
                 client.guilds_data[guild_id]['stable_message'] = stable_message
                 client.guilds_data[guild_id]['stable_message_id'] = stable_message.id
                 save_guilds_data()
-        # If stable_message_id doesn't exist, create one
         else:
             stable_message = await channel.send('🎶 **Music Bot UI Initialized** 🎶')
             client.guilds_data[guild_id]['stable_message'] = stable_message
             client.guilds_data[guild_id]['stable_message_id'] = stable_message.id
             save_guilds_data()
 
-        # Update the UI
         await update_stable_message(guild_id)
 
-    # Sync application commands
     await client.tree.sync()
 
 # Setup command to create the music channel and stable message
@@ -185,10 +220,8 @@ async def on_ready():
 @commands.has_permissions(manage_channels=True)
 async def setup(interaction: discord.Interaction):
     guild_id = str(interaction.guild.id)
-    # Check if the channel exists
     channel = discord.utils.get(interaction.guild.channels, name='leo-song-requests')
     if not channel:
-        # Create the channel
         overwrites = {
             interaction.guild.default_role: discord.PermissionOverwrite(
                 view_channel=True,
@@ -197,9 +230,7 @@ async def setup(interaction: discord.Interaction):
             )
         }
         channel = await interaction.guild.create_text_channel('leo-song-requests', overwrites=overwrites)
-    # Send the stable message
     stable_message = await channel.send('🎶 **Music Bot UI Initialized** 🎶')
-    # Store the stable message and channel ID
     client.guilds_data[guild_id] = {
         'channel_id': channel.id,
         'stable_message_id': stable_message.id,
@@ -208,12 +239,10 @@ async def setup(interaction: discord.Interaction):
     save_guilds_data()
     client.guilds_data[guild_id]['stable_message'] = stable_message
     await interaction.response.send_message('Music commands channel setup complete.', ephemeral=True)
-    # Initialize the stable message content
     await update_stable_message(guild_id)
-    # Clear other messages
     await clear_channel_messages(channel, stable_message.id)
 
-# Define the MusicControlView
+# Define the MusicControlView with various buttons
 class MusicControlView(View):
     def __init__(self, queue):
         super().__init__(timeout=None)
@@ -262,18 +291,13 @@ class MusicControlView(View):
         if voice_client:
             voice_client.stop()
             await voice_client.disconnect()
-            voice_clients.pop(guild_id, None)  # Safely remove the voice client
+            voice_clients.pop(guild_id, None)
             client.guilds_data[guild_id]['current_song'] = None
-
-            # Cancel the disconnect task if it exists
             disconnect_task = client.guilds_data[guild_id].get('disconnect_task')
             if disconnect_task:
                 disconnect_task.cancel()
                 client.guilds_data[guild_id]['disconnect_task'] = None
-
-            # Reset playback mode to NORMAL
             client.playback_modes[guild_id] = PlaybackMode.NORMAL
-
             await interaction.response.send_message('⏹️ Stopped the music and left the voice channel.')
         else:
             await interaction.response.send_message('❌ Not connected to a voice channel.')
@@ -329,6 +353,11 @@ class MusicControlView(View):
         modal = AddSongModal(interaction, play_next=True)
         await interaction.response.send_modal(modal)
 
+    @discord.ui.button(label='➕ Add Spotify Song', style=ButtonStyle.success)
+    async def add_spotify_song_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = AddSpotifySongModal(interaction)
+        await interaction.response.send_modal(modal)
+
     @discord.ui.button(label='❌ Remove', style=ButtonStyle.danger)
     async def remove_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         modal = RemoveSongModal(interaction)
@@ -336,13 +365,10 @@ class MusicControlView(View):
 
     async def delete_interaction_message(self, interaction):
         try:
-            # Fetch the interaction message (the ephemeral or the followup)
             message = await interaction.original_response()
-            # Delete the message after a short delay
             await asyncio.sleep(5)
             await message.delete()
         except Exception as e:
-            # This might fail if ephemeral or if the message no longer exists
             print(f"Error deleting interaction message: {e}")
 
 # Modal for adding a song
@@ -361,7 +387,6 @@ class AddSongModal(Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         song_name_or_url = self.song_input.value.strip()
-        # Defer to allow time for processing
         await interaction.response.defer(thinking=True)
 
         response_message = await process_play_request(
@@ -373,17 +398,14 @@ class AddSongModal(Modal):
             play_next=self.play_next
         )
 
-        # Try sending a followup message and catch NotFound errors.
         if response_message:
             try:
                 await interaction.followup.send(response_message)
             except discord.errors.NotFound:
-                # The interaction message was not found.
                 print("Interaction message not found. Followup message could not be sent.")
             except Exception as e:
                 print(f"Unexpected error sending followup: {e}")
 
-        # Delay clearing messages to ensure the followup is sent and visible.
         guild_id = str(interaction.guild.id)
         guild_data = client.guilds_data.get(guild_id)
         if guild_data:
@@ -391,9 +413,60 @@ class AddSongModal(Modal):
             channel_id = guild_data.get('channel_id')
             if stable_message_id and channel_id:
                 channel = client.get_channel(int(channel_id))
-                # Wait a bit before clearing to prevent premature deletion.
                 await asyncio.sleep(5)
                 await clear_channel_messages(channel, int(stable_message_id))
+
+# Modal for adding a Spotify song
+class AddSpotifySongModal(Modal):
+    def __init__(self, interaction: discord.Interaction, play_next=False):
+        title = "Play Next Spotify" if play_next else "Add Spotify Song"
+        super().__init__(title=title)
+        self.interaction = interaction
+        self.play_next = play_next
+        self.spotify_input = TextInput(
+            label="Spotify URL or Query",
+            placeholder="Enter a Spotify track URL or search query",
+            required=True
+        )
+        self.add_item(self.spotify_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        spotify_query = self.spotify_input.value.strip()
+        await interaction.response.defer(thinking=True)
+        
+        spotify_data = search_spotify_track(spotify_query)
+        if not spotify_data:
+            await interaction.followup.send("❌ Error searching Spotify.", ephemeral=True)
+            return
+        tracks = spotify_data.get("tracks", {}).get("items", [])
+        if not tracks:
+            await interaction.followup.send("❌ No tracks found on Spotify.", ephemeral=True)
+            return
+        best_track = max(tracks, key=lambda x: x.get("popularity", 0))
+        track_name = best_track.get("name")
+        artists = ", ".join(artist.get("name") for artist in best_track.get("artists", []))
+        search_query = f"{track_name} {artists}"
+        
+        response_message = await process_play_request(
+            interaction.user,
+            interaction.guild,
+            interaction.channel,
+            search_query,
+            interaction=interaction,
+            play_next=self.play_next
+        )
+        if response_message:
+            try:
+                await interaction.followup.send(response_message, ephemeral=True)
+            except Exception as e:
+                print(f"Error sending followup: {e}")
+        await update_stable_message(str(interaction.guild.id))
+        guild_data = client.guilds_data.get(str(interaction.guild.id))
+        if guild_data:
+            channel = client.get_channel(int(guild_data.get("channel_id")))
+            if channel:
+                await asyncio.sleep(5)
+                await clear_channel_messages(channel, int(guild_data.get("stable_message_id")))
 
 # Modal for removing a song
 class RemoveSongModal(Modal):
@@ -456,14 +529,12 @@ async def update_stable_message(guild_id):
             print(f"Failed to recreate stable message: {e}")
             return
 
-    # Create a credits embed (this will appear as a panel on top)
     credits_embed = Embed(
         title="Music Bot UI",
         description="Made by **Leo Nguyen**",
         color=0x1db954
     )
 
-    # Build the "Now Playing" embed
     queue = queues.get(guild_id, [])
     voice_client = voice_clients.get(guild_id)
 
@@ -490,7 +561,6 @@ async def update_stable_message(guild_id):
             color=0x1db954
         )
 
-    # Build the "Queue" embed
     if queue:
         queue_description = '\n'.join(
             f"{idx + 1}. **[{song['title']}]({song['webpage_url']})** — *{song.get('requester', 'Unknown')}*"
@@ -506,13 +576,7 @@ async def update_stable_message(guild_id):
     )
     queue_embed.set_footer(text=f"Total songs in queue: {len(queue)}")
 
-    # Create the MusicControlView
     view = MusicControlView(queue)
-
-    # Now update the stable message with our three embeds:
-    # 1. The credits panel on top
-    # 2. The now playing info
-    # 3. The queue information
     try:
         await stable_message.edit(embeds=[credits_embed, now_playing_embed, queue_embed], view=view)
     except discord.HTTPException as e:
@@ -529,7 +593,6 @@ async def clear_channel_messages(channel, stable_message_id):
             if message.id != stable_message_id and not message.pinned:
                 try:
                     await message.delete()
-                    # Sleep briefly to avoid rate limits if you have many messages
                     await asyncio.sleep(0.1)
                 except discord.Forbidden:
                     print(f"Permission error: Cannot delete message {message.id}")
@@ -548,7 +611,6 @@ def cancel_disconnect_task(guild_id):
 # Play the next song in the queue
 async def play_next(guild_id):
     guild_id = str(guild_id)
-    # Cancel the progress updater task if you had one
     progress_task = client.guilds_data[guild_id].get('progress_task')
     if progress_task:
         progress_task.cancel()
@@ -557,7 +619,6 @@ async def play_next(guild_id):
     playback_mode = client.playback_modes.get(guild_id, PlaybackMode.NORMAL)
 
     if playback_mode == PlaybackMode.REPEAT_ONE:
-        # Re-play the current song
         current_song = client.guilds_data[guild_id]['current_song']
         await play_song(guild_id, current_song)
     else:
@@ -566,15 +627,10 @@ async def play_next(guild_id):
             client.guilds_data[guild_id]['current_song'] = song_info
             await play_song(guild_id, song_info)
         else:
-            # No more songs in the queue
             client.guilds_data[guild_id]['current_song'] = None
-
-            # Schedule a delayed disconnect
             if not client.guilds_data[guild_id].get('disconnect_task'):
-                disconnect_task = client.loop.create_task(disconnect_after_delay(guild_id, delay=300))  # 5 minutes
+                disconnect_task = client.loop.create_task(disconnect_after_delay(guild_id, delay=300))
                 client.guilds_data[guild_id]['disconnect_task'] = disconnect_task
-
-            # Reset playback mode to NORMAL
             client.playback_modes[guild_id] = PlaybackMode.NORMAL
             await update_stable_message(guild_id)
 
@@ -587,11 +643,9 @@ async def play_song(guild_id, song_info):
         print(f"No voice client for guild {guild_id}")
         return
 
-    # Cancel any scheduled disconnect task
     cancel_disconnect_task(guild_id)
 
     song_url = song_info.get('url')
-    # If 'url' is not provided, get from 'formats'
     if not song_url and 'formats' in song_info:
         for fmt in song_info['formats']:
             if fmt.get('acodec') != 'none':
@@ -602,7 +656,6 @@ async def play_song(guild_id, song_info):
         print(f"No valid audio URL found for {song_info.get('title')}")
         return
 
-    # Stop any currently playing audio
     if voice_client.is_playing() or voice_client.is_paused():
         voice_client.stop()
 
@@ -622,12 +675,9 @@ async def play_song(guild_id, song_info):
         after=after_playing
     )
 
-    # Record the song in guild_data
     client.guilds_data[guild_id]['current_song'] = song_info
-    # Store the song duration for display
     client.guilds_data[guild_id]['song_duration'] = song_info.get('duration', 0)
 
-    # Announce playing in the music channel
     channel_id = client.guilds_data[guild_id]['channel_id']
     channel = client.get_channel(int(channel_id))
     try:
@@ -641,16 +691,13 @@ async def play_song(guild_id, song_info):
 # Helper function to process play requests
 async def process_play_request(user, guild, channel, link, interaction=None, play_next=False):
     guild_id = str(guild.id)
-    # Check if the guild is set up
     guild_data = client.guilds_data.get(guild_id)
     if not guild_data or not guild_data.get('channel_id'):
         return "❌ Please run /setup to initialize the music channel first."
 
-    # Ensure the user is a Member, not just a User
     if not isinstance(user, discord.Member):
         user = guild.get_member(user.id) or await guild.fetch_member(user.id)
 
-    # Refresh the member's voice state
     if not user.voice:
         await guild.request_members(user_ids=[user.id])
         user = guild.get_member(user.id)
@@ -660,7 +707,6 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
     if not user_voice_channel:
         return "❌ You are not connected to a voice channel."
 
-    # Get or create the voice client
     voice_client = voice_clients.get(guild_id)
     try:
         if voice_client:
@@ -676,13 +722,9 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
         print(f"Unexpected error: {e}")
         return f"❌ An unexpected error occurred: {e}"
 
-    # Cancel any scheduled disconnect task
     cancel_disconnect_task(guild_id)
 
-    # Use yt_dlp to extract info
-    # For a standard search (if no direct URL is found)
     if 'list=' not in link and 'watch?v=' not in link and 'youtu.be/' not in link:
-        # Treat as search query
         search_query = f"ytsearch:{link}"
         try:
             # --- Added filtering: choose the result with highest view count ---
@@ -694,25 +736,21 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
         except Exception as e:
             return f"❌ Error searching for the song: {e}"
     else:
-        # If it's a playlist or direct link
         loop = asyncio.get_event_loop()
         try:
             data = await loop.run_in_executor(None, lambda: ytdl.extract_info(link, download=False))
         except Exception as e:
             return f"❌ Error extracting song information: {e}"
 
-    # If it's a single video
     if 'entries' not in data:
         song_info = data
         song_info['requester'] = user.mention
 
         if not voice_client.is_playing() and not voice_client.is_paused():
-            # Start playing immediately
             client.guilds_data[guild_id]['current_song'] = song_info
             await play_song(guild_id, song_info)
             msg = f"🎶 Now playing: **{song_info.get('title', 'Unknown title')}**"
         else:
-            # Add to queue
             if guild_id not in queues:
                 queues[guild_id] = []
             if play_next:
@@ -721,13 +759,10 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
             else:
                 queues[guild_id].append(song_info)
                 msg = f"➕ Added to queue: **{song_info.get('title', 'Unknown title')}**"
-
     else:
-        # It's a playlist
         playlist_entries = data['entries']
         added_songs = []
         if play_next:
-            # Reverse before inserting so the first track is at front
             for entry in reversed(playlist_entries):
                 if entry is None:
                     continue
@@ -756,11 +791,9 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
                 f"with {len(added_songs)} songs to the queue."
             )
 
-        # Start playing if idle
         if not voice_client.is_playing() and not voice_client.is_paused():
             await play_next(guild_id)
 
-    # Clear messages except the stable message
     stable_message_id = guild_data.get('stable_message_id')
     channel_id = guild_data.get('channel_id')
     if stable_message_id and channel_id:
@@ -817,29 +850,21 @@ async def playnext_command(interaction: discord.Interaction, link: str):
 # Event handler for message deletion and processing song requests
 @client.event
 async def on_message(message):
-    # Ignore messages from the bot itself
     if message.author == client.user:
         return
-
     if not message.guild:
-        return  # Ignore DMs or non-guild messages
-
+        return
     guild_id = str(message.guild.id)
     guild_data = client.guilds_data.get(guild_id)
-
-    # If the guild is set up, check if message is in the bot's channel
     if guild_data:
         channel_id = guild_data.get('channel_id')
         if channel_id and message.channel.id == int(channel_id):
-            # Delete the user's message to keep channel clean
             try:
                 await message.delete()
             except discord.Forbidden:
                 print(f"Permission error: Cannot delete message {message.id}")
             except discord.HTTPException as e:
                 print(f"Failed to delete message {message.id}: {e}")
-
-            # The content is treated as a song request
             response_message = await process_play_request(
                 message.author,
                 message.guild,
@@ -851,10 +876,8 @@ async def on_message(message):
                 await asyncio.sleep(5)
                 await sent_msg.delete()
         else:
-            # Not in the music channel; process normal commands if any
             await client.process_commands(message)
     else:
-        # Process normal commands if the guild is not set up or for other channels
         await client.process_commands(message)
 
 # Function to handle delayed disconnect
@@ -868,9 +891,7 @@ async def disconnect_after_delay(guild_id, delay):
             client.guilds_data[guild_id]['disconnect_task'] = None
             await update_stable_message(guild_id)
     except asyncio.CancelledError:
-        # The task was cancelled, do nothing
         pass
 
-# Finally, run the bot
 if __name__ == "__main__":
     client.run(TOKEN)
