@@ -32,12 +32,8 @@ def get_spotify_token():
     token_url = "https://accounts.spotify.com/api/token"
     auth_str = f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}"
     b64_auth_str = base64.b64encode(auth_str.encode()).decode()
-    headers = {
-        "Authorization": f"Basic {b64_auth_str}"
-    }
-    data = {
-        "grant_type": "client_credentials"
-    }
+    headers = {"Authorization": f"Basic {b64_auth_str}"}
+    data = {"grant_type": "client_credentials"}
     response = requests.post(token_url, headers=headers, data=data)
     if response.status_code != 200:
         raise Exception("Could not authenticate with Spotify")
@@ -51,11 +47,7 @@ def search_spotify_track(query):
     token = get_spotify_token()
     headers = {"Authorization": f"Bearer {token}"}
     search_url = "https://api.spotify.com/v1/search"
-    params = {
-        "q": query,
-        "type": "track",
-        "limit": 5
-    }
+    params = {"q": query, "type": "track", "limit": 5}
     response = requests.get(search_url, headers=headers, params=params)
     if response.status_code != 200:
         return None
@@ -163,6 +155,10 @@ def is_setup():
 async def on_ready():
     load_guilds_data()
     print(f'{client.user} is now jamming!')
+
+    # Clear existing commands to avoid duplicate registration
+    client.tree.clear_commands(guild=None)
+    
     for guild_id in list(client.guilds_data.keys()):
         guild_data = client.guilds_data[guild_id]
         guild = client.get_guild(int(guild_id))
@@ -350,7 +346,7 @@ class MusicControlView(View):
         except Exception as e:
             print(f"Error deleting interaction message: {e}")
 
-# Modal for adding a song (with split fields: Song Title and Artist)
+# Modal for adding a song with two fields: Song Title and Artist
 class AddSongModal(Modal):
     def __init__(self, interaction: discord.Interaction, play_next=False):
         title = "Play Next" if play_next else "Add Song"
@@ -425,14 +421,11 @@ class AddSpotifySongModal(Modal):
         if not tracks:
             await interaction.followup.send("❌ No tracks found on Spotify.", ephemeral=True)
             return
-        # Filter if the query mentions a specific artist (example: "charlie puth")
+        # Filter if query mentions a specific artist (e.g., "charlie puth")
         query_lower = spotify_query.lower()
         filtered_tracks = []
         if "charlie puth" in query_lower:
-            filtered_tracks = [
-                track for track in tracks
-                if any("charlie puth" in artist["name"].lower() for artist in track.get("artists", []))
-            ]
+            filtered_tracks = [track for track in tracks if any("charlie puth" in artist["name"].lower() for artist in track.get("artists", []))]
         if filtered_tracks:
             best_track = max(filtered_tracks, key=lambda x: x.get("popularity", 0))
         else:
@@ -579,10 +572,8 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
                     queues[guild_id] = []
                 queues[guild_id].insert(0, song_info)
                 added_songs.append(song_info['title'])
-            msg = (
-                f"🎶 Added playlist **{data.get('title', 'Unknown playlist')}** "
-                f"with {len(added_songs)} songs to play next."
-            )
+            msg = (f"🎶 Added playlist **{data.get('title', 'Unknown playlist')}** "
+                   f"with {len(added_songs)} songs to play next.")
         else:
             for entry in playlist_entries:
                 if entry is None:
@@ -593,10 +584,8 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
                     queues[guild_id] = []
                 queues[guild_id].append(song_info)
                 added_songs.append(song_info['title'])
-            msg = (
-                f"🎶 Added playlist **{data.get('title', 'Unknown playlist')}** "
-                f"with {len(added_songs)} songs to the queue."
-            )
+            msg = (f"🎶 Added playlist **{data.get('title', 'Unknown playlist')}** "
+                   f"with {len(added_songs)} songs to the queue.")
         if not voice_client.is_playing() and not voice_client.is_paused():
             await play_next(guild_id)
     stable_message_id = guild_data.get('stable_message_id')
@@ -731,7 +720,6 @@ async def play_song(guild_id, song_info):
     await update_stable_message(guild_id)
     save_guilds_data()
 
-# Modified update_stable_message now displays the queue with source flags
 async def update_stable_message(guild_id):
     guild_id = str(guild_id)
     guild_data = client.guilds_data.get(guild_id)
@@ -783,7 +771,7 @@ async def update_stable_message(guild_id):
         )
     if queue:
         queue_description = '\n'.join(
-            f"{idx + 1}. **[{song['title']}]({song.get('spotify_url', song.get('webpage_url'))})** — *{song.get('requester', 'Unknown')}* ({song.get('source','youtube')})"
+            f"{idx + 1}. **[{song['title']}]({song.get('spotify_url', song.get('webpage_url'))})** — *{song.get('requester', 'Unknown')}* ({song.get('source', 'youtube')})"
             for idx, song in enumerate(queue)
         )
     else:
