@@ -337,9 +337,10 @@ class AddSongModal(Modal):
         is_direct_url = any(x in query for x in ['list=', 'watch?v=', 'youtu.be/'])
 
         if not is_direct_url:
-            # Perform a search and get the top 5 results
+            # Use an executor to speed up the search extraction
+            loop = asyncio.get_running_loop()
             try:
-                data = ytdl.extract_info(f"ytsearch5:{query}", download=False)
+                data = await loop.run_in_executor(None, lambda: ytdl.extract_info(f"ytsearch5:{query}", download=False))
                 results = data.get('entries', [])
                 if not results:
                     await interaction.followup.send("❌ No results found.", ephemeral=True)
@@ -356,9 +357,9 @@ class AddSongModal(Modal):
             else:
                 selected_song = results[0]
         else:
-            # Direct URL extraction
+            # Direct URL extraction in an executor as well
+            loop = asyncio.get_running_loop()
             try:
-                loop = asyncio.get_event_loop()
                 data = await loop.run_in_executor(None, lambda: ytdl.extract_info(query, download=False))
             except Exception as e:
                 await interaction.followup.send(f"❌ Error extracting song information: {e}", ephemeral=True)
@@ -369,7 +370,7 @@ class AddSongModal(Modal):
         response_message = await process_extracted_song(interaction, selected_song, self.play_next)
         await interaction.followup.send(response_message, ephemeral=True)
         await update_stable_message(str(interaction.guild.id))
-        # Optionally, clear other messages after a short delay
+        # Optionally, clear extra messages after a short delay
         guild_data = client.guilds_data.get(str(interaction.guild.id))
         if guild_data:
             channel = client.get_channel(int(guild_data.get('channel_id')))
@@ -441,6 +442,11 @@ class SongSelect(discord.ui.Select):
         response_message = await process_extracted_song(interaction, selected_song, self.play_next)
         await interaction.response.send_message(response_message, ephemeral=True)
         await update_stable_message(str(interaction.guild.id))
+        # Delete the selection message to clean up the UI
+        try:
+            await interaction.message.delete()
+        except Exception as e:
+            print(f"Error deleting selection message: {e}")
 
 # Helper function to process a song_info dictionary that was already extracted
 async def process_extracted_song(interaction, song_info, play_next=False):
