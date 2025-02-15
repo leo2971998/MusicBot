@@ -12,7 +12,7 @@ from enum import Enum
 
 # Load the environment variables
 load_dotenv()
-TOKEN = os.getenv("discord_token") or "YOUR_DISCORD_BOT_TOKEN"
+TOKEN = os.getenv("DISCORD_TOKEN") or "YOUR_DISCORD_BOT_TOKEN"
 
 # Set up bot intents and command prefix
 intents = discord.Intents.default()
