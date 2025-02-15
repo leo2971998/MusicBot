@@ -442,9 +442,19 @@ class AddSpotifySongModal(Modal):
         if not tracks:
             await interaction.followup.send("❌ No tracks found on Spotify.", ephemeral=True)
             return
-        best_track = max(tracks, key=lambda x: x.get("popularity", 0))
+
+        # --- Filter results if query includes an artist name (e.g., "charlie puth") ---
+        query_lower = spotify_query.lower()
+        filtered_tracks = []
+        if "charlie puth" in query_lower:
+            filtered_tracks = [track for track in tracks if any("charlie puth" in artist["name"].lower() for artist in track.get("artists", []))]
+        if filtered_tracks:
+            best_track = max(filtered_tracks, key=lambda x: x.get("popularity", 0))
+        else:
+            best_track = max(tracks, key=lambda x: x.get("popularity", 0))
         track_name = best_track.get("name")
         artists = ", ".join(artist.get("name") for artist in best_track.get("artists", []))
+        # Create a search query from the track name and artists for better matching via YouTube
         search_query = f"{track_name} {artists}"
         
         response_message = await process_play_request(
