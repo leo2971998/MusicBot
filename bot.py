@@ -216,7 +216,10 @@ async def setup(interaction: discord.Interaction):
 
 # Guard to avoid duplicate command registration.
 if not hasattr(client, "_commands_registered"):
-    @client.tree.command(name="play", description="Play a song or add it to the queue")
+    @client.tree.command(
+        name="play",
+        description="Play a song or add it to the queue. Use a YouTube URL/search term; for Spotify songs, please use the Spotify option on the UI."
+    )
     @is_setup()
     @app_commands.describe(link="The URL or name of the song to play")
     async def play_command(interaction: discord.Interaction, link: str):
@@ -232,7 +235,10 @@ if not hasattr(client, "_commands_registered"):
             await interaction.followup.send(response_message)
         await delete_interaction_message(interaction)
 
-    @client.tree.command(name="playnext", description="Play a song next")
+    @client.tree.command(
+        name="playnext",
+        description="Play a song next. Use a YouTube URL/search term; for Spotify songs, please use the Spotify option on the UI."
+    )
     @is_setup()
     @app_commands.describe(link="The URL or name of the song to play next")
     async def playnext_command(interaction: discord.Interaction, link: str):
@@ -638,39 +644,6 @@ async def delete_interaction_message(interaction):
     except Exception as e:
         print(f"Error deleting interaction message: {e}")
 
-@client.tree.command(name="play", description="Play a song or add it to the queue")
-@is_setup()
-@app_commands.describe(link="The URL or name of the song to play")
-async def play_command(interaction: discord.Interaction, link: str):
-    await interaction.response.defer()
-    response_message = await process_play_request(
-        interaction.user,
-        interaction.guild,
-        interaction.channel,
-        link,
-        interaction=interaction
-    )
-    if response_message:
-        await interaction.followup.send(response_message)
-    await delete_interaction_message(interaction)
-
-@client.tree.command(name="playnext", description="Play a song next")
-@is_setup()
-@app_commands.describe(link="The URL or name of the song to play next")
-async def playnext_command(interaction: discord.Interaction, link: str):
-    await interaction.response.defer()
-    response_message = await process_play_request(
-        interaction.user,
-        interaction.guild,
-        interaction.channel,
-        link,
-        interaction=interaction,
-        play_next=True
-    )
-    if response_message:
-        await interaction.followup.send(response_message)
-    await delete_interaction_message(interaction)
-
 @client.event
 async def on_message(message):
     if message.author == client.user:
@@ -867,45 +840,6 @@ async def play_next(guild_id):
                 client.guilds_data[guild_id]['disconnect_task'] = disconnect_task
             client.playback_modes[guild_id] = PlaybackMode.NORMAL
             await update_stable_message(guild_id)
-
-async def play_song(guild_id, song_info):
-    guild_id = str(guild_id)
-    voice_client = voice_clients.get(guild_id)
-    if not voice_client:
-        print(f"No voice client for guild {guild_id}")
-        return
-    cancel_disconnect_task(guild_id)
-    song_url = song_info.get('url')
-    if not song_url and 'formats' in song_info:
-        for fmt in song_info['formats']:
-            if fmt.get('acodec') != 'none':
-                song_url = fmt['url']
-                break
-    if not song_url:
-        print(f"No valid audio URL found for {song_info.get('title')}")
-        return
-    if voice_client.is_playing() or voice_client.is_paused():
-        voice_client.stop()
-    player = discord.FFmpegPCMAudio(song_url, **ffmpeg_options)
-    def after_playing(error):
-        if error:
-            print(f"Error occurred while playing: {error}")
-        future = asyncio.run_coroutine_threadsafe(play_next(guild_id), client.loop)
-        try:
-            future.result()
-        except Exception as e:
-            print(f"Error in play_next: {e}")
-    voice_client.play(player, after=after_playing)
-    client.guilds_data[guild_id]['current_song'] = song_info
-    client.guilds_data[guild_id]['song_duration'] = song_info.get('duration', 0)
-    channel_id = client.guilds_data[guild_id]['channel_id']
-    channel = client.get_channel(int(channel_id))
-    try:
-        await channel.send(f"🎶 Now playing: **{song_info.get('title', 'Unknown title')}**")
-    except Exception as e:
-        print(f"Failed to send now-playing message: {e}")
-    await update_stable_message(guild_id)
-    save_guilds_data()
 
 if __name__ == "__main__":
     client.run(TOKEN)
