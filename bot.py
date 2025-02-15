@@ -72,7 +72,6 @@ intents.members = True
 intents.voice_states = True  # Required for voice channel handling
 
 client = commands.Bot(command_prefix=".", intents=intents)
-# Access slash commands via client.tree
 client.guilds_data = {}
 
 # Define playback modes using Enum
@@ -80,17 +79,15 @@ class PlaybackMode(Enum):
     NORMAL = 'normal'
     REPEAT_ONE = 'repeat_one'
 
-# Initialize playback modes
 client.playback_modes = {}
 
-# Define global variables for managing queues and voice clients
+# Queues & voice clients
 queues = {}
 voice_clients = {}
 
-# Adjusted yt-dlp options with postprocessors
+# yt-dlp options
 yt_dl_options = {
     "format": "bestaudio/best",
-    # Postprocessor to ensure audio is in a stable format (opus, 192k)
     "postprocessors": [
         {
             'key': 'FFmpegExtractAudio',
@@ -106,13 +103,11 @@ yt_dl_options = {
 }
 ytdl = yt_dlp.YoutubeDL(yt_dl_options)
 
-# FFmpeg options for audio playback
 ffmpeg_options = {
     'before_options': '-re -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn -b:a 192k'
 }
 
-# Data persistence
 DATA_FILE = 'guilds_data.json'
 
 def save_guilds_data():
@@ -157,7 +152,6 @@ def load_guilds_data():
         client.guilds_data = {}
         client.playback_modes = {}
 
-# A check to ensure the bot is set up in this guild
 def is_setup():
     async def predicate(interaction: discord.Interaction):
         guild_id = str(interaction.guild_id)
@@ -239,7 +233,6 @@ async def setup(interaction: discord.Interaction):
     await interaction.response.send_message('Music commands channel setup complete.', ephemeral=True)
     await update_stable_message(guild_id)
     await clear_channel_messages(channel, stable_message.id)
-
 
 class MusicControlView(View):
     def __init__(self, queue):
@@ -441,14 +434,14 @@ class AddSpotifySongModal(Modal):
             await interaction.followup.send("❌ No tracks found on Spotify.", ephemeral=True)
             return
 
-        # Optional example filter: "charlie puth"
         query_lower = spotify_query.lower()
         filtered_tracks = []
         if "charlie puth" in query_lower:
             filtered_tracks = [
-                t for t in tracks
-                if any("charlie puth" in artist["name"].lower() for artist in t.get("artists", []))
+                track for track in tracks
+                if any("charlie puth" in artist["name"].lower() for artist in track.get("artists", []))
             ]
+
         if filtered_tracks:
             best_track = max(filtered_tracks, key=lambda x: x.get("popularity", 0))
         else:
@@ -458,14 +451,14 @@ class AddSpotifySongModal(Modal):
         artists = ", ".join(a.get("name") for a in best_track.get("artists", []))
 
         # We'll pass 'source' = 'spotify' as extra metadata
-        search_query = f"{track_name} {artists}"
-
-        # If you want the queue item to link to Spotify, store "spotify_url"
-        # from external_urls
+        # so it displays as Spotify in the UI
         extra_meta = {
             "spotify_url": best_track.get("external_urls", {}).get("spotify"),
             "source": "spotify"
         }
+
+        # Construct a YouTube search for the track name & artist (for playback)
+        search_query = f"{track_name} {artists}"
 
         response_message = await process_play_request(
             interaction.user,
@@ -474,6 +467,10 @@ class AddSpotifySongModal(Modal):
             search_query,
             interaction=interaction,
             play_next=self.play_next
+            # CRITICAL: pass the extra_meta so the item is flagged as 'spotify'
+            # otherwise it stays as a default "youtube" track
+            # The line below is the FIX:
+            , extra_meta=extra_meta
         )
 
         if response_message:
@@ -482,10 +479,7 @@ class AddSpotifySongModal(Modal):
             except Exception as e:
                 print(f"Error sending followup: {e}")
 
-        # Now update stable message to reflect new queue
         await update_stable_message(str(interaction.guild.id))
-
-        # Clear leftover messages in the channel
         guild_data = client.guilds_data.get(str(interaction.guild.id))
         if guild_data:
             channel = client.get_channel(int(guild_data.get("channel_id")))
@@ -529,8 +523,8 @@ def format_time(seconds):
     secs = int(seconds) % 60
     return f"{minutes:02d}:{secs:02d}"
 
-
 async def update_stable_message(guild_id):
+    # same code from your snippet, just updated to check 'source'
     guild_id = str(guild_id)
     guild_data = client.guilds_data.get(guild_id)
     if not guild_data:
@@ -563,15 +557,12 @@ async def update_stable_message(guild_id):
     queue = queues.get(guild_id, [])
     voice_client = voice_clients.get(guild_id)
 
-    # Different source coloring:
-    # If 'source' is spotify => color = green; if youtube => color = red
-    # We'll show "Now Playing (Spotify)" or "(YouTube)" accordingly.
     if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
         current_song = guild_data.get('current_song')
         duration = guild_data.get('song_duration', 0)
         duration_str = format_time(duration)
 
-        # Check the source
+        # Check the source to color it differently
         source = current_song.get('source', 'youtube')
         if source == 'spotify':
             now_title = "🎶 Now Playing (Spotify)"
@@ -579,7 +570,7 @@ async def update_stable_message(guild_id):
             link_url = current_song.get('spotify_url') or current_song.get('webpage_url')
         else:
             now_title = "🎶 Now Playing (YouTube)"
-            now_color = 0xff0000  # YouTube red
+            now_color = 0xff0000
             link_url = current_song.get('webpage_url')
 
         now_playing_embed = Embed(
@@ -587,11 +578,9 @@ async def update_stable_message(guild_id):
             description=f"**[{current_song['title']}]({link_url})**",
             color=now_color
         )
-
         if current_song.get('thumbnail'):
             now_playing_embed.set_thumbnail(url=current_song['thumbnail'])
-
-        now_playing_embed.add_field(name='Duration', value=duration_str, inline=False)
+        now_playing_embed.add_field(name='Duration', value=f"{duration_str}", inline=False)
         now_playing_embed.add_field(name='Requested by', value=current_song.get('requester', 'Unknown'), inline=False)
 
         playback_mode = client.playback_modes.get(guild_id, PlaybackMode.NORMAL)
@@ -603,15 +592,12 @@ async def update_stable_message(guild_id):
             color=0x1db954
         )
 
-    # Show the queue
-    # We'll add "🎧" for Spotify items, "📺" for YouTube, etc.
     def get_source_icon(song):
         return "🎧" if song.get('source') == 'spotify' else "📺"
 
     if queue:
         queue_description = '\n'.join(
-            f"{idx + 1}. {get_source_icon(song)} **[{song['title']}]({song.get('spotify_url', song.get('webpage_url'))})**"
-            f" — *{song.get('requester', 'Unknown')}*"
+            f"{idx + 1}. {get_source_icon(song)} **[{song['title']}]({song.get('spotify_url', song.get('webpage_url'))})** — *{song.get('requester', 'Unknown')}*"
             for idx, song in enumerate(queue)
         )
     else:
@@ -648,13 +634,11 @@ async def clear_channel_messages(channel, stable_message_id):
     except Exception as e:
         print(f"Error clearing channel messages: {e}")
 
-
 def cancel_disconnect_task(guild_id):
     disconnect_task = client.guilds_data.get(guild_id, {}).get('disconnect_task')
     if disconnect_task:
         disconnect_task.cancel()
         client.guilds_data[guild_id]['disconnect_task'] = None
-
 
 async def play_next(guild_id):
     guild_id = str(guild_id)
@@ -664,6 +648,7 @@ async def play_next(guild_id):
         client.guilds_data[guild_id]['progress_task'] = None
 
     playback_mode = client.playback_modes.get(guild_id, PlaybackMode.NORMAL)
+
     if playback_mode == PlaybackMode.REPEAT_ONE:
         current_song = client.guilds_data[guild_id]['current_song']
         await play_song(guild_id, current_song)
@@ -680,15 +665,12 @@ async def play_next(guild_id):
             client.playback_modes[guild_id] = PlaybackMode.NORMAL
             await update_stable_message(guild_id)
 
-
 async def play_song(guild_id, song_info):
     guild_id = str(guild_id)
     voice_client = voice_clients.get(guild_id)
-
     if not voice_client:
         print(f"No voice client for guild {guild_id}")
         return
-
     cancel_disconnect_task(guild_id)
 
     song_url = song_info.get('url')
@@ -716,11 +698,7 @@ async def play_song(guild_id, song_info):
         except Exception as e:
             print(f"Error in play_next: {e}")
 
-    voice_client.play(
-        player,
-        after=after_playing
-    )
-
+    voice_client.play(player, after=after_playing)
     client.guilds_data[guild_id]['current_song'] = song_info
     client.guilds_data[guild_id]['song_duration'] = song_info.get('duration', 0)
 
@@ -747,8 +725,11 @@ async def disconnect_after_delay(guild_id, delay):
     except asyncio.CancelledError:
         pass
 
-
-async def process_play_request(user, guild, channel, link, interaction=None, play_next=False):
+async def process_play_request(user, guild, channel, link, interaction=None, play_next=False, extra_meta=None):
+    """
+    The key difference is that if this is a Spotify track, we pass extra_meta={'source': 'spotify', ...}
+    so the 'source' is recognized and the item is displayed in green with the '🎧' icon in the queue.
+    """
     guild_id = str(guild.id)
     guild_data = client.guilds_data.get(guild_id)
     if not guild_data or not guild_data.get('channel_id'):
@@ -762,7 +743,6 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
         user = guild.get_member(user.id)
 
     user_voice_channel = user.voice.channel if user.voice else None
-
     if not user_voice_channel:
         return "❌ You are not connected to a voice channel."
 
@@ -783,10 +763,10 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
 
     cancel_disconnect_task(guild_id)
 
+    # If this is a normal search (not a direct link):
     if 'list=' not in link and 'watch?v=' not in link and 'youtu.be/' not in link:
         search_query = f"ytsearch:{link}"
         try:
-            # --- Added filtering: choose the result with highest view count ---
             search_results = ytdl.extract_info(search_query, download=False)['entries']
             if not search_results:
                 return "❌ No results found."
@@ -801,13 +781,16 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
         except Exception as e:
             return f"❌ Error extracting song information: {e}"
 
-    # Single track or playlist
+    # Single track vs playlist
     if 'entries' not in data:
         song_info = data
         song_info['requester'] = user.mention
 
-        # If we never set source, default to "youtube"
-        if 'source' not in song_info:
+        # If we got extra Spotify data, set it
+        if extra_meta:
+            song_info.update(extra_meta)  # e.g. {"spotify_url": "...", "source": "spotify"}
+        else:
+            # default to youtube
             song_info['source'] = 'youtube'
 
         if not voice_client.is_playing() and not voice_client.is_paused():
@@ -824,6 +807,7 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
                 queues[guild_id].append(song_info)
                 msg = f"➕ Added to queue: **{song_info.get('title', 'Unknown title')}**"
     else:
+        # It's a playlist
         playlist_entries = data['entries']
         added_songs = []
         if play_next:
@@ -832,33 +816,33 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
                     continue
                 song_info = entry
                 song_info['requester'] = user.mention
-                # Default to "youtube" if not set
-                if 'source' not in song_info:
+                # if we have extra_meta, apply it
+                if extra_meta:
+                    song_info.update(extra_meta)
+                else:
                     song_info['source'] = 'youtube'
                 if guild_id not in queues:
                     queues[guild_id] = []
                 queues[guild_id].insert(0, song_info)
                 added_songs.append(song_info['title'])
-            msg = (
-                f"🎶 Added playlist **{data.get('title', 'Unknown playlist')}** "
-                f"with {len(added_songs)} songs to play next."
-            )
+            msg = (f"🎶 Added playlist **{data.get('title', 'Unknown playlist')}** "
+                   f"with {len(added_songs)} songs to play next.")
         else:
             for entry in playlist_entries:
                 if entry is None:
                     continue
                 song_info = entry
                 song_info['requester'] = user.mention
-                if 'source' not in song_info:
+                if extra_meta:
+                    song_info.update(extra_meta)
+                else:
                     song_info['source'] = 'youtube'
                 if guild_id not in queues:
                     queues[guild_id] = []
                 queues[guild_id].append(song_info)
                 added_songs.append(song_info['title'])
-            msg = (
-                f"🎶 Added playlist **{data.get('title', 'Unknown playlist')}** "
-                f"with {len(added_songs)} songs to the queue."
-            )
+            msg = (f"🎶 Added playlist **{data.get('title', 'Unknown playlist')}** "
+                   f"with {len(added_songs)} songs to the queue.")
 
         if not voice_client.is_playing() and not voice_client.is_paused():
             await play_next(guild_id)
@@ -866,12 +850,11 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
     stable_message_id = guild_data.get('stable_message_id')
     channel_id = guild_data.get('channel_id')
     if stable_message_id and channel_id:
-        channel = client.get_channel(int(channel_id))
-        await clear_channel_messages(channel, int(stable_message_id))
+        ch = client.get_channel(int(channel_id))
+        await clear_channel_messages(ch, int(stable_message_id))
 
     await update_stable_message(guild_id)
     return msg
-
 
 async def delete_interaction_message(interaction):
     try:
@@ -880,7 +863,6 @@ async def delete_interaction_message(interaction):
         await message.delete()
     except Exception as e:
         print(f"Error deleting interaction message: {e}")
-
 
 @client.tree.command(name="play", description="Play a song or add it to the queue")
 @is_setup()
