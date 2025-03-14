@@ -48,6 +48,7 @@ def get_spotify_token():
     spotify_token_expiry = time.time() + expires_in - 10  # refresh a few seconds early
     return spotify_access_token
 
+# (Existing search function can remain for non-link queries)
 def search_spotify_track(query):
     token = get_spotify_token()
     headers = {
@@ -61,6 +62,44 @@ def search_spotify_track(query):
     }
     response = requests.get(search_url, headers=headers, params=params)
     if response.status_code != 200:
+        return None
+    return response.json()
+
+# New helper to fetch track info from a Spotify track URL
+def get_spotify_track_data(link):
+    try:
+        parts = link.split('/')
+        # Expected format: .../track/{id}?...
+        track_index = parts.index("track")
+        track_id = parts[track_index + 1].split('?')[0]
+    except Exception as e:
+        print(f"Error extracting track id: {e}")
+        return None
+    token = get_spotify_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    track_url = f"https://api.spotify.com/v1/tracks/{track_id}"
+    response = requests.get(track_url, headers=headers)
+    if response.status_code != 200:
+        print(f"Error fetching track data: {response.status_code}")
+        return None
+    return response.json()
+
+# New helper to fetch playlist info from a Spotify playlist URL
+def get_spotify_playlist_data(link):
+    try:
+        parts = link.split('/')
+        # Expected format: .../playlist/{id}?...
+        playlist_index = parts.index("playlist")
+        playlist_id = parts[playlist_index + 1].split('?')[0]
+    except Exception as e:
+        print(f"Error extracting playlist id: {e}")
+        return None
+    token = get_spotify_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    playlist_url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
+    response = requests.get(playlist_url, headers=headers)
+    if response.status_code != 200:
+        print(f"Error fetching playlist data: {response.status_code}")
         return None
     return response.json()
 
@@ -362,7 +401,6 @@ class MusicControlView(View):
         except Exception as e:
             print(f"Error deleting interaction message: {e}")
 
-
 class AddSongModal(Modal):
     def __init__(self, interaction: discord.Interaction, play_next=False):
         title = "Play Next" if play_next else "Add Song"
@@ -407,7 +445,6 @@ class AddSongModal(Modal):
                 await asyncio.sleep(5)
                 await clear_channel_messages(channel, int(stable_message_id))
 
-
 class AddSpotifySongModal(Modal):
     def __init__(self, interaction: discord.Interaction, play_next=False):
         title = "Play Next Spotify" if play_next else "Add Spotify Song"
@@ -415,8 +452,8 @@ class AddSpotifySongModal(Modal):
         self.interaction = interaction
         self.play_next = play_next
         self.spotify_input = TextInput(
-            label="Spotify URL or Query",
-            placeholder="Enter a Spotify track URL or search query",
+            label="Spotify URL",
+            placeholder="Enter a Spotify track or playlist URL",
             required=True
         )
         self.add_item(self.spotify_input)
@@ -425,59 +462,72 @@ class AddSpotifySongModal(Modal):
         spotify_query = self.spotify_input.value.strip()
         await interaction.response.defer(thinking=True)
 
-        spotify_data = search_spotify_track(spotify_query)
-        if not spotify_data:
-            await interaction.followup.send("❌ Error searching Spotify.", ephemeral=True)
-            return
-        tracks = spotify_data.get("tracks", {}).get("items", [])
-        if not tracks:
-            await interaction.followup.send("❌ No tracks found on Spotify.", ephemeral=True)
+        # Only allow Spotify links in this modal
+        if not spotify_query.startswith("https://open.spotify.com/"):
+            await interaction.followup.send("❌ Please provide a valid Spotify link.", ephemeral=True)
             return
 
-        query_lower = spotify_query.lower()
-        filtered_tracks = []
-        if "charlie puth" in query_lower:
-            filtered_tracks = [
-                track for track in tracks
-                if any("charlie puth" in artist["name"].lower() for artist in track.get("artists", []))
-            ]
-
-        if filtered_tracks:
-            best_track = max(filtered_tracks, key=lambda x: x.get("popularity", 0))
+        # Check if the link is for a playlist or a single track
+        if "playlist" in spotify_query:
+            data = get_spotify_playlist_data(spotify_query)
+            if not data:
+                await interaction.followup.send("❌ Could not fetch playlist data.", ephemeral=True)
+                return
+            tracks = data.get("tracks", {}).get("items", [])
+            if not tracks:
+                await interaction.followup.send("❌ No tracks found in the playlist.", ephemeral=True)
+                return
+            added_count = 0
+            # Iterate over each track in the playlist and add to queue
+            for item in tracks:
+                track_info = item.get("track")
+                if not track_info:
+                    continue
+                track_name = track_info.get("name")
+                artists = ", ".join(artist["name"] for artist in track_info.get("artists", []))
+                search_query = f"{track_name} {artists}"
+                extra_meta = {
+                    "spotify_url": track_info.get("external_urls", {}).get("spotify"),
+                    "source": "spotify"
+                }
+                await process_play_request(
+                    interaction.user,
+                    interaction.guild,
+                    interaction.channel,
+                    search_query,
+                    interaction=interaction,
+                    play_next=False,
+                    extra_meta=extra_meta
+                )
+                added_count += 1
+            await interaction.followup.send(
+                f"🎶 Added playlist **{data.get('name', 'Unknown playlist')}** with {added_count} songs to the queue.",
+                ephemeral=True
+            )
+        elif "track" in spotify_query:
+            data = get_spotify_track_data(spotify_query)
+            if not data:
+                await interaction.followup.send("❌ Could not fetch track data.", ephemeral=True)
+                return
+            track_name = data.get("name")
+            artists = ", ".join(artist["name"] for artist in data.get("artists", []))
+            search_query = f"{track_name} {artists}"
+            extra_meta = {
+                "spotify_url": data.get("external_urls", {}).get("spotify"),
+                "source": "spotify"
+            }
+            response_message = await process_play_request(
+                interaction.user,
+                interaction.guild,
+                interaction.channel,
+                search_query,
+                interaction=interaction,
+                play_next=self.play_next,
+                extra_meta=extra_meta
+            )
+            await interaction.followup.send(response_message, ephemeral=True)
         else:
-            best_track = max(tracks, key=lambda x: x.get("popularity", 0))
-
-        track_name = best_track.get("name")
-        artists = ", ".join(a.get("name") for a in best_track.get("artists", []))
-
-        # We'll pass 'source' = 'spotify' as extra metadata
-        # so it displays as Spotify in the UI
-        extra_meta = {
-            "spotify_url": best_track.get("external_urls", {}).get("spotify"),
-            "source": "spotify"
-        }
-
-        # Construct a YouTube search for the track name & artist (for playback)
-        search_query = f"{track_name} {artists}"
-
-        response_message = await process_play_request(
-            interaction.user,
-            interaction.guild,
-            interaction.channel,
-            search_query,
-            interaction=interaction,
-            play_next=self.play_next
-            # CRITICAL: pass the extra_meta so the item is flagged as 'spotify'
-            # otherwise it stays as a default "youtube" track
-            # The line below is the FIX:
-            , extra_meta=extra_meta
-        )
-
-        if response_message:
-            try:
-                await interaction.followup.send(response_message, ephemeral=True)
-            except Exception as e:
-                print(f"Error sending followup: {e}")
+            await interaction.followup.send("❌ Unsupported Spotify link. Please provide a track or playlist URL.", ephemeral=True)
 
         await update_stable_message(str(interaction.guild.id))
         guild_data = client.guilds_data.get(str(interaction.guild.id))
@@ -486,7 +536,6 @@ class AddSpotifySongModal(Modal):
             if channel:
                 await asyncio.sleep(5)
                 await clear_channel_messages(channel, int(guild_data.get("stable_message_id")))
-
 
 class RemoveSongModal(Modal):
     def __init__(self, interaction: discord.Interaction):
@@ -517,14 +566,12 @@ class RemoveSongModal(Modal):
         except ValueError:
             await interaction.response.send_message('❌ Please enter a valid number.', ephemeral=True)
 
-
 def format_time(seconds):
     minutes = int(seconds) // 60
     secs = int(seconds) % 60
     return f"{minutes:02d}:{secs:02d}"
 
 async def update_stable_message(guild_id):
-    # same code from your snippet, just updated to check 'source'
     guild_id = str(guild_id)
     guild_data = client.guilds_data.get(guild_id)
     if not guild_data:
@@ -562,7 +609,6 @@ async def update_stable_message(guild_id):
         duration = guild_data.get('song_duration', 0)
         duration_str = format_time(duration)
 
-        # Check the source to color it differently
         source = current_song.get('source', 'youtube')
         if source == 'spotify':
             now_title = "🎶 Now Playing (Spotify)"
@@ -712,7 +758,6 @@ async def play_song(guild_id, song_info):
     await update_stable_message(guild_id)
     save_guilds_data()
 
-
 async def disconnect_after_delay(guild_id, delay):
     try:
         await asyncio.sleep(delay)
@@ -727,8 +772,7 @@ async def disconnect_after_delay(guild_id, delay):
 
 async def process_play_request(user, guild, channel, link, interaction=None, play_next=False, extra_meta=None):
     """
-    The key difference is that if this is a Spotify track, we pass extra_meta={'source': 'spotify', ...}
-    so the 'source' is recognized and the item is displayed in green with the '🎧' icon in the queue.
+    If extra_meta is provided (for example, from a Spotify track) the track is flagged accordingly.
     """
     guild_id = str(guild.id)
     guild_data = client.guilds_data.get(guild_id)
@@ -786,11 +830,9 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
         song_info = data
         song_info['requester'] = user.mention
 
-        # If we got extra Spotify data, set it
         if extra_meta:
-            song_info.update(extra_meta)  # e.g. {"spotify_url": "...", "source": "spotify"}
+            song_info.update(extra_meta)
         else:
-            # default to youtube
             song_info['source'] = 'youtube'
 
         if not voice_client.is_playing() and not voice_client.is_paused():
@@ -807,7 +849,7 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
                 queues[guild_id].append(song_info)
                 msg = f"➕ Added to queue: **{song_info.get('title', 'Unknown title')}**"
     else:
-        # It's a playlist
+        # It's a playlist from YouTube
         playlist_entries = data['entries']
         added_songs = []
         if play_next:
@@ -816,7 +858,6 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
                     continue
                 song_info = entry
                 song_info['requester'] = user.mention
-                # if we have extra_meta, apply it
                 if extra_meta:
                     song_info.update(extra_meta)
                 else:
