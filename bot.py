@@ -139,6 +139,7 @@ yt_dl_options = {
     "default_search": "auto",
     "extract_flat": False,
     "nocheckcertificate": True,
+    "cookies": 'youtube_cookies.txt',  # Add this line to include cookies
 }
 ytdl = yt_dlp.YoutubeDL(yt_dl_options)
 
