@@ -820,7 +820,7 @@ async def process_play_request(user, guild, channel, link, interaction=None, pla
         except Exception as e:
             return f"❌ Error searching for the song: {e}"
     else:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             data = await loop.run_in_executor(None, lambda: ytdl.extract_info(link, download=False))
         except Exception as e:
