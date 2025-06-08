@@ -973,18 +973,5 @@ async def on_message(message):
             await client.process_commands(message)
     else:
         await client.process_commands(message)
-
-async def disconnect_after_delay(guild_id, delay):
-    try:
-        await asyncio.sleep(delay)
-        voice_client = voice_clients.get(guild_id)
-        if voice_client and not voice_client.is_playing():
-            await voice_client.disconnect()
-            voice_clients.pop(guild_id, None)
-            client.guilds_data[guild_id]['disconnect_task'] = None
-            await update_stable_message(guild_id)
-    except asyncio.CancelledError:
-        pass
-
 if __name__ == "__main__":
     client.run(TOKEN)
