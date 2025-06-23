@@ -286,7 +286,10 @@ async def _play_next_song(guild_id, client, queue_manager, player_manager, data_
             client.playback_modes[guild_id] = PlaybackMode.NORMAL
 
             # Schedule disconnect after delay
-            disconnect_task = asyncio.create_task(_disconnect_after_delay(guild_id, player_manager, 300))
+            from config import IDLE_DISCONNECT_DELAY
+            disconnect_task = asyncio.create_task(
+                _disconnect_after_delay(guild_id, player_manager, IDLE_DISCONNECT_DELAY)
+            )
             player_manager.add_task(guild_id, 'disconnect_task', disconnect_task)
 
         # Update UI

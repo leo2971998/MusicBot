@@ -20,8 +20,15 @@ class PlayerManager:
 
             if voice_client:
                 if voice_client.channel != user_voice_channel:
-                    logger.info(f"Moving voice client in guild {guild_id} to {user_voice_channel}")
-                    await voice_client.move_to(user_voice_channel)
+                    if not voice_client.is_playing() and not voice_client.is_paused():
+                        logger.info(
+                            f"Moving voice client in guild {guild_id} to {user_voice_channel}"
+                        )
+                        await voice_client.move_to(user_voice_channel)
+                    else:
+                        logger.info(
+                            f"Voice client already playing in {voice_client.channel}; not moving"
+                        )
                 return voice_client
             else:
                 logger.info(f"Connecting to voice channel {user_voice_channel} in guild {guild_id}")
