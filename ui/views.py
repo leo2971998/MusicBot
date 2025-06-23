@@ -4,7 +4,6 @@ import discord
 from discord import ButtonStyle
 from discord.ui import View, Button
 from config import PlaybackMode
-# REMOVE LINE 7: from bot import update_stable_message  <- DELETE THIS LINE
 logger = logging.getLogger(__name__)
 
 class MusicControlView(View):
@@ -53,7 +52,7 @@ class MusicControlView(View):
     @discord.ui.button(label='⏸️ Pause', style=ButtonStyle.primary)
     async def pause_button(self, interaction: discord.Interaction, button: Button):
         # Import here to avoid circular imports
-        from bot import player_manager, data_manager
+        from bot_state import player_manager, data_manager
         from ui.embeds import update_stable_message
 
         guild_id = str(interaction.guild.id)
@@ -70,7 +69,7 @@ class MusicControlView(View):
 
     @discord.ui.button(label='▶️ Resume', style=ButtonStyle.primary)
     async def resume_button(self, interaction: discord.Interaction, button: Button):
-        from bot import player_manager
+        from bot_state import player_manager
         from ui.embeds import update_stable_message
 
         guild_id = str(interaction.guild.id)
@@ -87,7 +86,7 @@ class MusicControlView(View):
 
     @discord.ui.button(label='⏭️ Skip', style=ButtonStyle.primary)
     async def skip_button(self, interaction: discord.Interaction, button: Button):
-        from bot import player_manager
+        from bot_state import player_manager
         from ui.embeds import update_stable_message
 
         guild_id = str(interaction.guild.id)
@@ -104,7 +103,7 @@ class MusicControlView(View):
 
     @discord.ui.button(label='⏹️ Stop', style=ButtonStyle.primary)
     async def stop_button(self, interaction: discord.Interaction, button: Button):
-        from bot import player_manager, client, queue_manager
+        from bot_state import player_manager, client, queue_manager
         from ui.embeds import update_stable_message
 
         guild_id = str(interaction.guild.id)
@@ -119,7 +118,7 @@ class MusicControlView(View):
 
     @discord.ui.button(label='🗑️ Clear Queue', style=ButtonStyle.danger)
     async def clear_queue_button(self, interaction: discord.Interaction, button: Button):
-        from bot import queue_manager
+        from bot_state import queue_manager
         from ui.embeds import update_stable_message
 
         guild_id = str(interaction.guild.id)
@@ -135,7 +134,7 @@ class MusicControlView(View):
 
     @discord.ui.button(label='🔁 Normal', style=ButtonStyle.secondary)
     async def normal_mode_button(self, interaction: discord.Interaction, button: Button):
-        from bot import client
+        from bot_state import client
         from ui.embeds import update_stable_message
 
         guild_id = str(interaction.guild.id)
@@ -147,7 +146,7 @@ class MusicControlView(View):
 
     @discord.ui.button(label='🔂 Repeat', style=ButtonStyle.secondary)
     async def repeat_one_button(self, interaction: discord.Interaction, button: Button):
-        from bot import client
+        from bot_state import client
         from ui.embeds import update_stable_message
 
         guild_id = str(interaction.guild.id)
@@ -159,7 +158,7 @@ class MusicControlView(View):
 
     @discord.ui.button(label='🔀 Shuffle', style=ButtonStyle.primary)
     async def shuffle_button(self, interaction: discord.Interaction, button: Button):
-        from bot import queue_manager
+        from bot_state import queue_manager
         from ui.embeds import update_stable_message
 
         guild_id = str(interaction.guild.id)

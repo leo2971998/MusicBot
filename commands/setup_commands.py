@@ -91,7 +91,7 @@ def setup_admin_commands(client, data_manager):
             guild_id = str(interaction.guild.id)
 
             # Clean up voice client if connected
-            from bot import player_manager, queue_manager
+            from bot_state import player_manager, queue_manager
             await player_manager.disconnect_voice_client(guild_id)
 
             # Clear queue

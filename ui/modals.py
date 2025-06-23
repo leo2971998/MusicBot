@@ -26,7 +26,7 @@ class AddSongModal(Modal):
 
         # Import here to avoid circular imports
         from commands.music_commands import process_play_request
-        from bot import client, queue_manager, player_manager, data_manager
+        from bot_state import client, queue_manager, player_manager, data_manager
 
         try:
             response_message = await process_play_request(
@@ -89,7 +89,7 @@ class RemoveSongModal(Modal):
             index = int(self.song_index.value.strip())
             guild_id = str(interaction.guild.id)
 
-            from bot import queue_manager
+            from bot_state import queue_manager
             from ui.embeds import update_stable_message
 
             removed_song = queue_manager.remove_song(guild_id, index)
