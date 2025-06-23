@@ -91,14 +91,110 @@ async def restore_stable_message(guild_id: str, guild_data: dict, channel: disco
             except discord.NotFound:
                 pass
         if not stable_message:
-            stable_message = await channel.send('🎶 **Music Bot UI Initialized** �')
+            stable_message = await channel.send('🎶 **Music Bot UI Initialized** 🎶')
             guild_data['stable_message_id'] = stable_message.id
         guild_data['stable_message'] = stable_message
+
+        # **FIX: Update the stable message with embeds and view**
+        await update_stable_message(guild_id)
+
         return True
     except Exception as e:
         logger.error(f'Failed to restore stable message in guild {guild_id}: {e}')
         return False
 
+async def update_stable_message(guild_id: str):
+    """Update the stable message with current bot state"""
+    try:
+        guild_id = str(guild_id)
+        guild_data = client.guilds_data.get(guild_id)
+        if not guild_data:
+            return
+
+        channel_id = guild_data.get('channel_id')
+        if not channel_id:
+            return
+
+        channel = client.get_channel(int(channel_id))
+        if not channel:
+            return
+
+        stable_message = guild_data.get('stable_message')
+        if not stable_message:
+            try:
+                stable_message = await channel.send('🎶 **Music Bot UI Initialized** 🎶')
+                guild_data['stable_message'] = stable_message
+                guild_data['stable_message_id'] = stable_message.id
+                await data_manager.save_guilds_data(client)
+            except Exception as e:
+                logger.error(f"Failed to recreate stable message: {e}")
+                return
+
+        # Create embeds
+        from ui.embeds import create_credits_embed, create_now_playing_embed, create_queue_embed
+        from ui.views import MusicControlView
+
+        embeds = [
+            create_credits_embed(),
+            create_now_playing_embed(guild_id, guild_data),
+            create_queue_embed(guild_id)
+        ]
+
+        view = MusicControlView()
+
+        try:
+            await stable_message.edit(embeds=embeds, view=view)
+        except Exception as e:
+            logger.error(f"Error updating stable message in guild {guild_id}: {e}")
+
+        # Save guild data
+        await data_manager.save_guilds_data(client)
+
+    except Exception as e:
+        logger.error(f"Error in update_stable_message for guild {guild_id}: {e}")
+
+# Add event handler for message deletion in music channels
+@client.event
+async def on_message(message):
+    if message.author == client.user:
+        return
+    if not message.guild:
+        return
+
+    guild_id = str(message.guild.id)
+    guild_data = client.guilds_data.get(guild_id)
+
+    if guild_data:
+        channel_id = guild_data.get('channel_id')
+        if channel_id and message.channel.id == int(channel_id):
+            # Delete the message
+            try:
+                await message.delete()
+            except discord.Forbidden:
+                logger.warning(f"Permission error: Cannot delete message {message.id}")
+            except discord.HTTPException as e:
+                logger.warning(f"Failed to delete message {message.id}: {e}")
+
+            # Process as play request
+            from commands.music_commands import process_play_request
+            response_message = await process_play_request(
+                message.author,
+                message.guild,
+                message.channel,
+                message.content,
+                client,
+                queue_manager,
+                player_manager,
+                data_manager
+            )
+
+            if response_message:
+                sent_msg = await message.channel.send(response_message)
+                await asyncio.sleep(5)
+                try:
+                    await sent_msg.delete()
+                except:
+                    pass
 
 def load_extensions():
     from commands import music_commands, setup_commands

@@ -1,11 +1,11 @@
 def format_time(seconds):
-    """Format seconds into MM:SS format"""
-    try:
-        minutes = int(seconds) // 60
-        secs = int(seconds) % 60
-        return f"{minutes:02d}:{secs:02d}"
-    except (ValueError, TypeError):
+    """Format time in seconds to MM:SS format"""
+    if not seconds:
         return "00:00"
+
+    minutes = int(seconds) // 60
+    secs = int(seconds) % 60
+    return f"{minutes:02d}:{secs:02d}"
 
 def format_duration(duration):
     """Format duration with hours if needed"""
