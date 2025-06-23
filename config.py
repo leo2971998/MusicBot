@@ -1,0 +1,40 @@
+import os
+from enum import Enum
+
+# Bot Configuration
+TOKEN = os.getenv('DISCORD_TOKEN')
+DATA_FILE = 'guilds_data.json'
+MUSIC_CHANNEL_NAME = 'leo-song-requests'
+
+# FFmpeg options
+FFMPEG_OPTIONS = {
+    'before_options': '-re -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'options': '-vn -b:a 192k'
+}
+
+# YT-DLP options
+YTDL_FORMAT_OPTS = {
+    'format': 'bestaudio/best',
+    'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
+    'restrictfilenames': True,
+    'noplaylist': True,
+    'nocheckcertificate': True,
+    'ignoreerrors': False,
+    'logtostderr': False,
+    'quiet': True,
+    'no_warnings': True,
+    'default_search': 'auto',
+    'source_address': '0.0.0.0',
+}
+
+class PlaybackMode(Enum):
+    NORMAL = "Normal"
+    REPEAT_ONE = "Repeat"
+
+# Spotify Configuration
+SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
+SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
+
+# Logging Configuration
+LOG_LEVEL = "INFO"
+LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
