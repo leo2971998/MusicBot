@@ -1,10 +1,67 @@
 import asyncio
+import json
 import logging
+import os
 from typing import Dict, Optional, Callable
 import discord
 from discord.ext import commands
 
 logger = logging.getLogger(__name__)
+
+class GuildDataManager:
+    """Manages persistent data for Discord guilds"""
+
+    def __init__(self, data_file: str = "guilds_data.json"):
+        self.data_file = data_file
+
+    async def load_guilds_data(self, client: commands.Bot) -> None:
+        """Load guild data from persistent storage"""
+        try:
+            if os.path.exists(self.data_file):
+                with open(self.data_file, 'r') as f:
+                    client.guilds_data = json.load(f)
+                logger.info(f"Loaded data for {len(client.guilds_data)} guilds")
+            else:
+                client.guilds_data = {}
+                logger.info("No existing guild data found, starting fresh")
+        except Exception as e:
+            logger.error(f"Error loading guild data: {e}")
+            client.guilds_data = {}
+
+    async def save_guilds_data(self, client: commands.Bot) -> None:
+        """Save guild data to persistent storage"""
+        try:
+            # Create a copy of the data without the stable_message objects
+            # (since they can't be serialized)
+            data_to_save = {}
+            for guild_id, guild_data in client.guilds_data.items():
+                cleaned_data = {}
+                for key, value in guild_data.items():
+                    # Skip non-serializable objects like discord.Message
+                    if key != 'stable_message' and not isinstance(value, discord.Message):
+                        cleaned_data[key] = value
+                data_to_save[guild_id] = cleaned_data
+
+            with open(self.data_file, 'w') as f:
+                json.dump(data_to_save, f, indent=2)
+            logger.info(f"Saved data for {len(data_to_save)} guilds")
+        except Exception as e:
+            logger.error(f"Error saving guild data: {e}")
+
+    def get_guild_data(self, client: commands.Bot, guild_id: str) -> dict:
+        """Get data for a specific guild"""
+        return client.guilds_data.get(guild_id, {})
+
+    def set_guild_data(self, client: commands.Bot, guild_id: str, data: dict) -> None:
+        """Set data for a specific guild"""
+        if guild_id not in client.guilds_data:
+            client.guilds_data[guild_id] = {}
+        client.guilds_data[guild_id].update(data)
+
+    def remove_guild_data(self, client: commands.Bot, guild_id: str) -> None:
+        """Remove data for a specific guild"""
+        client.guilds_data.pop(guild_id, None)
+
 
 class PlayerManager:
     """Improved player management with better error handling and cleanup"""
