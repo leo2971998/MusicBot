@@ -4,7 +4,7 @@ import discord
 from discord import ButtonStyle
 from discord.ui import View, Button
 from config import PlaybackMode
-from bot import update_stable_message
+# REMOVE LINE 7: from bot import update_stable_message  <- DELETE THIS LINE
 logger = logging.getLogger(__name__)
 
 class MusicControlView(View):
