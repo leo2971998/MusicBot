@@ -5,6 +5,56 @@ from utils.format_utils import format_time
 
 logger = logging.getLogger(__name__)
 
+async def update_stable_message(guild_id: str):
+    """Update the stable message with current bot state"""
+    try:
+        # Import here to avoid circular imports
+        from bot import client, queue_manager, player_manager, data_manager
+
+        guild_id = str(guild_id)
+        guild_data = client.guilds_data.get(guild_id)
+        if not guild_data:
+            return
+
+        channel_id = guild_data.get('channel_id')
+        if not channel_id:
+            return
+
+        channel = client.get_channel(int(channel_id))
+        if not channel:
+            return
+
+        stable_message = guild_data.get('stable_message')
+        if not stable_message:
+            try:
+                stable_message = await channel.send('🎶 **Music Bot UI Initialized** 🎶')
+                guild_data['stable_message'] = stable_message
+                guild_data['stable_message_id'] = stable_message.id
+                await data_manager.save_guilds_data(client)
+            except Exception as e:
+                logger.error(f"Failed to recreate stable message: {e}")
+                return
+
+        # Create embeds
+        embeds = [
+            create_credits_embed(),
+            create_now_playing_embed(guild_id, guild_data),
+            create_queue_embed(guild_id)
+        ]
+
+        view = MusicControlView()
+
+        try:
+            await stable_message.edit(embeds=embeds, view=view)
+        except Exception as e:
+            logger.error(f"Error updating stable message in guild {guild_id}: {e}")
+
+        # Save guild data
+        await data_manager.save_guilds_data(client)
+
+    except Exception as e:
+        logger.error(f"Error in update_stable_message for guild {guild_id}: {e}")
+
 def create_credits_embed() -> Embed:
     """Create the credits embed"""
     return Embed(
