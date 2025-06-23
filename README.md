@@ -73,9 +73,9 @@ If you prefer text commands, or if button-based interactions are unavailable for
      ```
    - Configure any additional settings as needed (e.g., prefix, default volume).
 
-5. **Run the Bot**  
+5. **Run the Bot**
    ```bash
-   python bot.py
+   python -m bot
    ```
 
    Once the bot is running, invite it to your server using the OAuth2 link provided in the Discord Developer Portal.

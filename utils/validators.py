@@ -9,7 +9,7 @@ def is_setup():
     async def predicate(interaction: discord.Interaction):
         try:
             # Import here to avoid circular imports
-            from bot import client
+            from bot_state import client
 
             guild_id = str(interaction.guild_id)
             guild_data = client.guilds_data.get(guild_id)

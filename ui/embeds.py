@@ -10,7 +10,7 @@ async def update_stable_message(guild_id: str):
     """Update the stable message with current bot state"""
     try:
         # Import here to avoid circular imports
-        from bot import client, queue_manager, player_manager, data_manager
+        from bot_state import client, queue_manager, player_manager, data_manager
 
         guild_id = str(guild_id)
         guild_data = client.guilds_data.get(guild_id)
@@ -117,7 +117,7 @@ def create_now_playing_embed(guild_id: str, guild_data: dict) -> Embed:
     """Create the now playing embed"""
     try:
         # Import here to avoid circular imports
-        from bot import player_manager, client
+        from bot_state import player_manager, client
 
         voice_client = player_manager.voice_clients.get(guild_id)
 
@@ -173,7 +173,7 @@ def _create_empty_now_playing_embed() -> Embed:
 def create_queue_embed(guild_id: str) -> Embed:
     """Create the queue embed"""
     try:
-        from bot import queue_manager
+        from bot_state import queue_manager
 
         queue = queue_manager.get_queue(guild_id)
 
