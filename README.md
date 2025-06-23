@@ -71,9 +71,11 @@ If you prefer text commands, or if button-based interactions are unavailable for
    - **Add a Bot User** to your application and copy your Bot Token.  
    - **Set Up a Configuration File** (e.g., `.env` or `config.json`) with the following:
      ```env
-     DISCORD_BOT_TOKEN=YOUR_BOT_TOKEN
-     ```
-   - Configure any additional settings as needed (e.g., prefix, default volume).
+      DISCORD_BOT_TOKEN=YOUR_BOT_TOKEN
+      # Optional: how long the bot stays in voice when idle
+      IDLE_DISCONNECT_DELAY=120
+      ```
+    - Configure any additional settings as needed (e.g., prefix, default volume).
 
 5. **Run the Bot**
    ```bash

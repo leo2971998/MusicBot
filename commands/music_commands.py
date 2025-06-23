@@ -99,6 +99,14 @@ async def process_play_request(user, guild, channel, link, client, queue_manager
         except Exception as e:
             return f"❌ Could not connect to voice channel: {e}"
 
+        notify_channel = None
+        if (
+            voice_client.channel != user_voice_channel
+            and (voice_client.is_playing() or voice_client.is_paused())
+        ):
+            # Let the user know where the bot is currently playing
+            notify_channel = voice_client.channel
+
         # Extract song information
         song_data = await _extract_song_data(link)
         if not song_data:
@@ -106,15 +114,37 @@ async def process_play_request(user, guild, channel, link, client, queue_manager
 
         # Process single track vs playlist
         if 'entries' not in song_data:
-            return await _process_single_song(
-                song_data, user, guild_id, client, queue_manager,
-                player_manager, data_manager, play_next, extra_meta
+            msg = await _process_single_song(
+                song_data,
+                user,
+                guild_id,
+                client,
+                queue_manager,
+                player_manager,
+                data_manager,
+                play_next,
+                extra_meta,
             )
         else:
-            return await _process_playlist(
-                song_data, user, guild_id, client, queue_manager,
-                player_manager, data_manager, play_next, extra_meta
+            msg = await _process_playlist(
+                song_data,
+                user,
+                guild_id,
+                client,
+                queue_manager,
+                player_manager,
+                data_manager,
+                play_next,
+                extra_meta,
             )
+
+        if notify_channel:
+            msg += (
+                f"\n🔊 Bot is currently playing in {notify_channel.mention}."
+                " Join that channel to listen."
+            )
+
+        return msg
 
     except Exception as e:
         logger.error(f"Error processing play request: {e}")
