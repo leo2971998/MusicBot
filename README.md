@@ -12,12 +12,14 @@ Below is a screenshot demonstrating the MusicBot’s UI with button controls:
 
 ## Features
 
-- **Play music** from various sources (e.g., YouTube)  
-- **Queue management** for multiple songs  
-- **Playback controls** (play, pause, skip, stop)  
-- **Button-based interactions** for users who prefer a graphical interface  
-- **Command-based interface** for users who prefer text commands  
-- **Easy configuration** through environment variables or a config file  
+- **Play music** from various sources (e.g., YouTube)
+- **Queue management** for multiple songs
+- **Playback controls** (play, pause, skip, stop)
+- **Button-based interactions** for users who prefer a graphical interface
+- **Command-based interface** for users who prefer text commands
+- **Easy configuration** through environment variables or a config file
+- **Works across multiple guilds** with isolated queues
+- **Auto disconnect** when idle (default 2 minutes)
 
 ## Button-Based Usage
 
