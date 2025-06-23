@@ -44,23 +44,34 @@ async def on_ready():
 async def restore_guild_states():
     guilds_to_remove = []
     for guild_id, guild_data in list(client.guilds_data.items()):
-        guild = client.get_guild(int(guild_id))
+        try:
+            # Validate that guild_id is numeric
+            if not guild_id.isdigit():
+                logger.warning(f"Invalid guild_id format: {guild_id}, removing from data")
+                guilds_to_remove.append(guild_id)
+                continue
 
-        if not guild:
+            guild = client.get_guild(int(guild_id))
+
+            if not guild:
+                guilds_to_remove.append(guild_id)
+                continue
+
+            channel_id = guild_data.get('channel_id')
+            if not channel_id:
+                guilds_to_remove.append(guild_id)
+                continue
+
+            channel = guild.get_channel(int(channel_id))
+            if not channel:
+                guilds_to_remove.append(guild_id)
+                continue
+
+            await restore_stable_message(guild_id, guild_data, channel)
+        except Exception as e:
+            logger.error(f"Error processing guild {guild_id}: {e}")
             guilds_to_remove.append(guild_id)
-            continue
 
-        channel_id = guild_data.get('channel_id')
-        if not channel_id:
-            guilds_to_remove.append(guild_id)
-            continue
-
-        channel = guild.get_channel(int(channel_id))
-        if not channel:
-            guilds_to_remove.append(guild_id)
-            continue
-
-        await restore_stable_message(guild_id, guild_data, channel)
     for gid in guilds_to_remove:
         client.guilds_data.pop(gid, None)
         client.playback_modes.pop(gid, None)
