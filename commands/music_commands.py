@@ -100,10 +100,8 @@ async def process_play_request(user, guild, channel, link, client, queue_manager
             )
         except Exception as e:
             return f"❌ Could not connect to voice channel: {e}"
-
         # Cancel any pending auto-disconnect while new music is queued
         player_manager.cancel_task(guild_id, "disconnect_task")
-
         notify_channel = None
         if (
             voice_client.channel != user_voice_channel
