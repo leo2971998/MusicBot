@@ -95,9 +95,22 @@ async def process_play_request(user, guild, channel, link, client, queue_manager
 
         # Get or create voice client
         try:
-            voice_client = await player_manager.get_or_create_voice_client(guild_id, user_voice_channel)
+            voice_client = await player_manager.get_or_create_voice_client(
+                guild_id, user_voice_channel
+            )
         except Exception as e:
             return f"❌ Could not connect to voice channel: {e}"
+
+        # Cancel any pending auto-disconnect while new music is queued
+        player_manager.cancel_task(guild_id, "disconnect_task")
+
+        notify_channel = None
+        if (
+            voice_client.channel != user_voice_channel
+            and (voice_client.is_playing() or voice_client.is_paused())
+        ):
+            # Let the user know where the bot is currently playing
+            notify_channel = voice_client.channel
 
         # Extract song information
         song_data = await _extract_song_data(link)
@@ -106,15 +119,37 @@ async def process_play_request(user, guild, channel, link, client, queue_manager
 
         # Process single track vs playlist
         if 'entries' not in song_data:
-            return await _process_single_song(
-                song_data, user, guild_id, client, queue_manager,
-                player_manager, data_manager, play_next, extra_meta
+            msg = await _process_single_song(
+                song_data,
+                user,
+                guild_id,
+                client,
+                queue_manager,
+                player_manager,
+                data_manager,
+                play_next,
+                extra_meta,
             )
         else:
-            return await _process_playlist(
-                song_data, user, guild_id, client, queue_manager,
-                player_manager, data_manager, play_next, extra_meta
+            msg = await _process_playlist(
+                song_data,
+                user,
+                guild_id,
+                client,
+                queue_manager,
+                player_manager,
+                data_manager,
+                play_next,
+                extra_meta,
             )
+
+        if notify_channel:
+            msg += (
+                f"\n🔊 Bot is currently playing in {notify_channel.mention}."
+                " Join that channel to listen."
+            )
+
+        return msg
 
     except Exception as e:
         logger.error(f"Error processing play request: {e}")
@@ -286,7 +321,10 @@ async def _play_next_song(guild_id, client, queue_manager, player_manager, data_
             client.playback_modes[guild_id] = PlaybackMode.NORMAL
 
             # Schedule disconnect after delay
-            disconnect_task = asyncio.create_task(_disconnect_after_delay(guild_id, player_manager, 300))
+            from config import IDLE_DISCONNECT_DELAY
+            disconnect_task = asyncio.create_task(
+                _disconnect_after_delay(guild_id, player_manager, IDLE_DISCONNECT_DELAY)
+            )
             player_manager.add_task(guild_id, 'disconnect_task', disconnect_task)
 
         # Update UI
