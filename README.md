@@ -19,7 +19,7 @@ Below is a screenshot demonstrating the MusicBot’s UI with button controls:
 - **Command-based interface** for users who prefer text commands
 - **Easy configuration** through environment variables or a config file
 - **Works across multiple guilds** with isolated queues
-- **Auto disconnect** when idle (default 2 minutes)
+- **Auto disconnect** when idle (default 2 minutes, resets whenever new music is queued)
 
 ## Button-Based Usage
 
@@ -75,6 +75,7 @@ If you prefer text commands, or if button-based interactions are unavailable for
       # Optional: how long the bot stays in voice when idle
       IDLE_DISCONNECT_DELAY=120
       ```
+      The timer is automatically cancelled if new songs are added before it expires.
     - Configure any additional settings as needed (e.g., prefix, default volume).
 
 5. **Run the Bot**

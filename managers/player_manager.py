@@ -101,6 +101,16 @@ class PlayerManager:
 
         self.active_tasks[guild_id][task_name] = task
 
+    def cancel_task(self, guild_id: str, task_name: str) -> None:
+        """Cancel a registered task if it exists"""
+        guild_tasks = self.active_tasks.get(guild_id)
+        if not guild_tasks:
+            return
+
+        task = guild_tasks.pop(task_name, None)
+        if task and not task.done():
+            task.cancel()
+
     async def play_audio_source(self, guild_id: str, source, after_callback: Optional[Callable] = None) -> bool:
         """Play audio source with improved error handling"""
         try:
