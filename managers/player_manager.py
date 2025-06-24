@@ -20,8 +20,15 @@ class PlayerManager:
 
             if voice_client:
                 if voice_client.channel != user_voice_channel:
-                    logger.info(f"Moving voice client in guild {guild_id} to {user_voice_channel}")
-                    await voice_client.move_to(user_voice_channel)
+                    if not voice_client.is_playing() and not voice_client.is_paused():
+                        logger.info(
+                            f"Moving voice client in guild {guild_id} to {user_voice_channel}"
+                        )
+                        await voice_client.move_to(user_voice_channel)
+                    else:
+                        logger.info(
+                            f"Voice client already playing in {voice_client.channel}; not moving"
+                        )
                 return voice_client
             else:
                 logger.info(f"Connecting to voice channel {user_voice_channel} in guild {guild_id}")
@@ -35,8 +42,17 @@ class PlayerManager:
         except discord.errors.Forbidden as e:
             logger.error(f"Permission error in guild {guild_id}: {e}")
             raise
+        except discord.errors.ConnectionClosed as e:
+            logger.warning(
+                f"Voice connection closed unexpectedly in guild {guild_id}: {e}"
+            )
+            self.voice_clients.pop(guild_id, None)
+            raise
         except Exception as e:
-            logger.error(f"Unexpected error connecting to voice in guild {guild_id}: {e}")
+            logger.error(
+                f"Unexpected error connecting to voice in guild {guild_id}: {e}"
+            )
+            self.voice_clients.pop(guild_id, None)
             raise
 
     async def disconnect_voice_client(self, guild_id: str, cleanup_tasks: bool = True) -> bool:
