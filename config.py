@@ -12,8 +12,8 @@ MUSIC_CHANNEL_NAME = 'leo-song-requests'
 
 # FFmpeg options
 FFMPEG_OPTIONS = {
-    'before_options': '-re -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn -b:a 192k'
+    'before_options': ' -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'options': '-vn'
 }
 
 # YT-DLP options
