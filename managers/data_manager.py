@@ -73,6 +73,13 @@ class PlayerManager:
     async def get_or_create_voice_client(self, guild_id: str, user_voice_channel: discord.VoiceChannel) -> Optional[discord.VoiceClient]:
         """Get existing voice client or create new one with proper error handling"""
         try:
+            permissions = user_voice_channel.permissions_for(user_voice_channel.guild.me)
+            if not permissions.connect or not permissions.speak:
+                raise commands.BotMissingPermissions([perm for perm, allowed in {
+                    'connect': permissions.connect,
+                    'speak': permissions.speak
+                }.items() if not allowed])
+
             voice_client = self.voice_clients.get(guild_id)
 
             if voice_client:
@@ -83,6 +90,11 @@ class PlayerManager:
             else:
                 logger.info(f"Connecting to voice channel {user_voice_channel} in guild {guild_id}")
                 voice_client = await user_voice_channel.connect()
+                # Wait briefly to ensure the connection is fully ready
+                for _ in range(5):
+                    if voice_client.is_connected():
+                        break
+                    await asyncio.sleep(0.2)
                 self.voice_clients[guild_id] = voice_client
                 return voice_client
 

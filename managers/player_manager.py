@@ -18,6 +18,13 @@ class PlayerManager:
         try:
             voice_client = self.voice_clients.get(guild_id)
 
+            permissions = user_voice_channel.permissions_for(user_voice_channel.guild.me)
+            if not permissions.connect or not permissions.speak:
+                raise commands.BotMissingPermissions([perm for perm, allowed in {
+                    'connect': permissions.connect,
+                    'speak': permissions.speak
+                }.items() if not allowed])
+
             if voice_client:
                 if voice_client.channel != user_voice_channel:
                     if not voice_client.is_playing() and not voice_client.is_paused():
@@ -33,6 +40,11 @@ class PlayerManager:
             else:
                 logger.info(f"Connecting to voice channel {user_voice_channel} in guild {guild_id}")
                 voice_client = await user_voice_channel.connect()
+                # Wait briefly to ensure the connection is fully ready
+                for _ in range(5):
+                    if voice_client.is_connected():
+                        break
+                    await asyncio.sleep(0.2)
                 self.voice_clients[guild_id] = voice_client
                 return voice_client
 
