@@ -68,7 +68,10 @@ If you prefer text commands, or if button-based interactions are unavailable for
 
 4. **Configuration**  
    - **Create a Discord Application** on the [Discord Developer Portal](https://discord.com/developers/applications).  
-   - **Add a Bot User** to your application and copy your Bot Token.  
+   - **Add a Bot User** to your application and copy your Bot Token.
+   - **Enable the Voice States Gateway Intent** in the Developer Portal so the bot can manage voice connections properly.
+   - **Verify Channel Permissions**:
+     Ensure the bot has **Connect** and **Speak** permissions in every voice channel you intend to use. Check channel-level permission overwrites and grant a Stage Moderator role if using Discord Stage channels.
    - **Set Up a Configuration File** (e.g., `.env` or `config.json`) with the following:
      ```env
       DISCORD_BOT_TOKEN=YOUR_BOT_TOKEN
