@@ -42,8 +42,17 @@ class PlayerManager:
         except discord.errors.Forbidden as e:
             logger.error(f"Permission error in guild {guild_id}: {e}")
             raise
+        except discord.errors.ConnectionClosed as e:
+            logger.warning(
+                f"Voice connection closed unexpectedly in guild {guild_id}: {e}"
+            )
+            self.voice_clients.pop(guild_id, None)
+            raise
         except Exception as e:
-            logger.error(f"Unexpected error connecting to voice in guild {guild_id}: {e}")
+            logger.error(
+                f"Unexpected error connecting to voice in guild {guild_id}: {e}"
+            )
+            self.voice_clients.pop(guild_id, None)
             raise
 
     async def disconnect_voice_client(self, guild_id: str, cleanup_tasks: bool = True) -> bool:
