@@ -221,6 +221,5 @@ class PlayerManager:
             except Exception as e:
                 logger.error(f"Health check error for guild {guild_id}: {e}")
                 health_status[guild_id] = False
-
         logger.debug(f"Health check results: {health_status}")
         return health_status
