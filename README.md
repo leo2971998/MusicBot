@@ -68,15 +68,21 @@ If you prefer text commands, or if button-based interactions are unavailable for
 
 4. **Configuration**  
    - **Create a Discord Application** on the [Discord Developer Portal](https://discord.com/developers/applications).  
-   - **Add a Bot User** to your application and copy your Bot Token.  
+   - **Add a Bot User** to your application and copy your Bot Token.
+   - **Enable the Voice States Gateway Intent** in the Developer Portal so the bot can manage voice connections properly.
+   - **Verify Channel Permissions**:
+     Ensure the bot has **Connect** and **Speak** permissions in every voice channel you intend to use. Check channel-level permission overwrites and grant a Stage Moderator role if using Discord Stage channels.
    - **Set Up a Configuration File** (e.g., `.env` or `config.json`) with the following:
      ```env
       DISCORD_BOT_TOKEN=YOUR_BOT_TOKEN
       # Optional: how long the bot stays in voice when idle
       IDLE_DISCONNECT_DELAY=120
       ```
-      The timer is automatically cancelled if new songs are added before it expires.
-    - Configure any additional settings as needed (e.g., prefix, default volume).
+     The timer is automatically cancelled if new songs are added before it expires.
+   - Configure any additional settings as needed (e.g., prefix, default volume).
+   - **Enable Debug Logging (optional)**:
+     Set `LOG_LEVEL=DEBUG` in your environment or `config.json` to see detailed
+     debug messages for troubleshooting.
 
 5. **Run the Bot**
    ```bash

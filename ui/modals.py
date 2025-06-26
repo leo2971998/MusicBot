@@ -20,6 +20,7 @@ class AddSongModal(Modal):
         self.add_item(self.song_input)
 
     async def on_submit(self, interaction: discord.Interaction):
+        logger.debug(f"AddSongModal submitted in guild {interaction.guild_id}")
         await interaction.response.defer(thinking=True)
 
         song_name_or_url = self.song_input.value.strip()
@@ -85,6 +86,7 @@ class RemoveSongModal(Modal):
         self.add_item(self.song_index)
 
     async def on_submit(self, interaction: discord.Interaction):
+        logger.debug(f"RemoveSongModal submitted in guild {interaction.guild_id}")
         try:
             index = int(self.song_index.value.strip())
             guild_id = str(interaction.guild.id)

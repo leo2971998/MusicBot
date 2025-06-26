@@ -40,7 +40,7 @@ SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
 SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
 
 # Logging Configuration
-LOG_LEVEL = "INFO"
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 # How long to stay connected when idle (in seconds)

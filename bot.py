@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 @client.event
 async def on_ready():
     logger.info(f'{client.user} has connected to Discord!')
+    logger.debug('Loading guild data and restoring states')
     await data_manager.load_guilds_data(client)
     await restore_guild_states()
 
@@ -23,10 +24,12 @@ async def on_ready():
     try:
         synced = await client.tree.sync()
         logger.info(f'Synced {len(synced)} slash commands')
+        logger.debug(f'Synced commands: {[cmd.name for cmd in synced]}')
     except Exception as e:
         logger.error(f'Failed to sync commands: {e}')
 
 async def restore_guild_states():
+    logger.debug('Restoring guild states')
     guilds_to_remove = []
     for guild_id, guild_data in list(client.guilds_data.items()):
         try:
@@ -68,6 +71,7 @@ async def restore_guild_states():
 
 async def restore_stable_message(guild_id: str, guild_data: dict, channel: discord.TextChannel) -> bool:
     try:
+        logger.debug(f'Restoring stable message in guild {guild_id}')
         stable_message_id = guild_data.get('stable_message_id')
         stable_message = None
         if stable_message_id:
@@ -92,6 +96,7 @@ async def restore_stable_message(guild_id: str, guild_data: dict, channel: disco
 @client.event
 async def on_message(message):
     """Handle messages in music channels"""
+    logger.debug(f"on_message event in guild {getattr(message.guild, 'id', 'DM')} with content: {message.content}")
     if message.author == client.user:
         return
 
