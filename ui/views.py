@@ -55,6 +55,8 @@ class MusicControlView(View):
         from bot_state import player_manager, data_manager
         from ui.embeds import update_stable_message
 
+        logger.debug(f"Pause button clicked in guild {interaction.guild_id}")
+
         guild_id = str(interaction.guild.id)
         voice_client = player_manager.voice_clients.get(guild_id)
 
@@ -71,6 +73,8 @@ class MusicControlView(View):
     async def resume_button(self, interaction: discord.Interaction, button: Button):
         from bot_state import player_manager
         from ui.embeds import update_stable_message
+
+        logger.debug(f"Resume button clicked in guild {interaction.guild_id}")
 
         guild_id = str(interaction.guild.id)
         voice_client = player_manager.voice_clients.get(guild_id)
@@ -90,6 +94,7 @@ class MusicControlView(View):
         from ui.embeds import update_stable_message
 
         guild_id = str(interaction.guild.id)
+        logger.debug(f"Skip button clicked in guild {interaction.guild_id}")
         voice_client = player_manager.voice_clients.get(guild_id)
 
         if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
@@ -107,6 +112,7 @@ class MusicControlView(View):
         from ui.embeds import update_stable_message
 
         guild_id = str(interaction.guild.id)
+        logger.debug(f"Stop button clicked in guild {interaction.guild_id}")
 
         await player_manager.disconnect_voice_client(guild_id)
         client.guilds_data[guild_id]['current_song'] = None
@@ -122,6 +128,7 @@ class MusicControlView(View):
         from ui.embeds import update_stable_message
 
         guild_id = str(interaction.guild.id)
+        logger.debug(f"Clear queue button clicked in guild {interaction.guild_id}")
         count = queue_manager.clear_queue(guild_id)
 
         if count > 0:
@@ -138,6 +145,7 @@ class MusicControlView(View):
         from ui.embeds import update_stable_message
 
         guild_id = str(interaction.guild.id)
+        logger.debug(f"Normal mode button clicked in guild {interaction.guild_id}")
         client.playback_modes[guild_id] = PlaybackMode.NORMAL
 
         await self._safe_interaction_response(interaction, 'Playback mode set to: **Normal**')
@@ -150,6 +158,7 @@ class MusicControlView(View):
         from ui.embeds import update_stable_message
 
         guild_id = str(interaction.guild.id)
+        logger.debug(f"Repeat button clicked in guild {interaction.guild_id}")
         client.playback_modes[guild_id] = PlaybackMode.REPEAT_ONE
 
         await self._safe_interaction_response(interaction, 'Playback mode set to: **Repeat**')
@@ -162,6 +171,7 @@ class MusicControlView(View):
         from ui.embeds import update_stable_message
 
         guild_id = str(interaction.guild.id)
+        logger.debug(f"Shuffle button clicked in guild {interaction.guild_id}")
 
         if queue_manager.shuffle_queue(guild_id):
             await self._safe_interaction_response(interaction, '🔀 Queue shuffled.')
@@ -174,24 +184,28 @@ class MusicControlView(View):
     @discord.ui.button(label='➕ Add Song', style=ButtonStyle.success)
     async def add_song_button(self, interaction: discord.Interaction, button: Button):
         from ui.modals import AddSongModal
+        logger.debug(f"Add song button clicked in guild {interaction.guild_id}")
         modal = AddSongModal()
         await interaction.response.send_modal(modal)
 
     @discord.ui.button(label='➕ Play Next', style=ButtonStyle.success)
     async def add_next_song_button(self, interaction: discord.Interaction, button: Button):
         from ui.modals import AddSongModal
+        logger.debug(f"Play next button clicked in guild {interaction.guild_id}")
         modal = AddSongModal(play_next=True)
         await interaction.response.send_modal(modal)
 
     @discord.ui.button(label='❌ Remove', style=ButtonStyle.danger)
     async def remove_button(self, interaction: discord.Interaction, button: Button):
         from ui.modals import RemoveSongModal
+        logger.debug(f"Remove button clicked in guild {interaction.guild_id}")
         modal = RemoveSongModal()
         await interaction.response.send_modal(modal)
 
     async def _delete_interaction_message_safe(self, interaction: discord.Interaction, delay: float = 5.0):
         """Safely delete interaction message"""
         try:
+            logger.debug(f"Deleting interaction message in guild {interaction.guild_id} after {delay}s")
             await asyncio.sleep(delay)
             message = await interaction.original_response()
             await message.delete()

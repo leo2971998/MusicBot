@@ -17,6 +17,7 @@ class GuildDataManager:
     async def load_guilds_data(self, client: commands.Bot) -> None:
         """Load guild data from persistent storage"""
         try:
+            logger.debug(f"Loading guild data from {self.data_file}")
             if os.path.exists(self.data_file):
                 with open(self.data_file, 'r') as f:
                     client.guilds_data = json.load(f)
@@ -31,6 +32,7 @@ class GuildDataManager:
     async def save_guilds_data(self, client: commands.Bot) -> None:
         """Save guild data to persistent storage"""
         try:
+            logger.debug(f"Saving guild data to {self.data_file}")
             # Create a copy of the data without the stable_message objects
             # (since they can't be serialized)
             data_to_save = {}
@@ -73,6 +75,9 @@ class PlayerManager:
     async def get_or_create_voice_client(self, guild_id: str, user_voice_channel: discord.VoiceChannel) -> Optional[discord.VoiceClient]:
         """Get existing voice client or create new one with proper error handling"""
         try:
+            logger.debug(
+                f"get_or_create_voice_client called for guild {guild_id} in channel {user_voice_channel}"
+            )
             permissions = user_voice_channel.permissions_for(user_voice_channel.guild.me)
             if not permissions.connect or not permissions.speak:
                 raise commands.BotMissingPermissions([perm for perm, allowed in {
@@ -95,6 +100,9 @@ class PlayerManager:
                     if voice_client.is_connected():
                         break
                     await asyncio.sleep(0.2)
+                logger.debug(
+                    f"Voice client connected status in guild {guild_id}: {voice_client.is_connected()}"
+                )
                 self.voice_clients[guild_id] = voice_client
                 return voice_client
 
@@ -111,6 +119,7 @@ class PlayerManager:
     async def disconnect_voice_client(self, guild_id: str, cleanup_tasks: bool = True) -> bool:
         """Safely disconnect voice client and cleanup resources"""
         try:
+            logger.debug(f"disconnect_voice_client called for guild {guild_id}")
             voice_client = self.voice_clients.get(guild_id)
             if voice_client:
                 if voice_client.is_connected():
@@ -129,6 +138,7 @@ class PlayerManager:
 
     async def cleanup_guild_tasks(self, guild_id: str):
         """Clean up all async tasks for a guild"""
+        logger.debug(f"cleanup_guild_tasks called for guild {guild_id}")
         if guild_id in self.active_tasks:
             for task_name, task in self.active_tasks[guild_id].items():
                 if not task.done():
@@ -143,6 +153,7 @@ class PlayerManager:
 
     def add_task(self, guild_id: str, task_name: str, task: asyncio.Task):
         """Register a task for cleanup"""
+        logger.debug(f"Adding task {task_name} for guild {guild_id}")
         if guild_id not in self.active_tasks:
             self.active_tasks[guild_id] = {}
 
@@ -157,6 +168,7 @@ class PlayerManager:
     async def play_audio_source(self, guild_id: str, source, after_callback: Optional[Callable] = None) -> bool:
         """Play audio source with improved error handling"""
         try:
+            logger.debug(f"play_audio_source called for guild {guild_id}")
             voice_client = self.voice_clients.get(guild_id)
             if not voice_client:
                 logger.error(f"No voice client for guild {guild_id}")
@@ -178,6 +190,9 @@ class PlayerManager:
 
             voice_client.play(source, after=safe_after_callback)
             logger.info(f"Started playing audio in guild {guild_id}")
+            logger.debug(
+                f"Voice client status after play in guild {guild_id}: playing={voice_client.is_playing()}"
+            )
             return True
 
         except Exception as e:
@@ -187,6 +202,7 @@ class PlayerManager:
     async def health_check(self) -> Dict[str, bool]:
         """Check health of all voice clients"""
         health_status = {}
+        logger.debug("Running voice client health check")
 
         for guild_id, voice_client in self.voice_clients.items():
             try:
@@ -195,6 +211,9 @@ class PlayerManager:
                         voice_client.channel is not None
                 )
                 health_status[guild_id] = is_healthy
+                logger.debug(
+                    f"Health status for guild {guild_id}: {is_healthy}"
+                )
 
                 if not is_healthy:
                     logger.warning(f"Unhealthy voice client in guild {guild_id}")
@@ -202,5 +221,5 @@ class PlayerManager:
             except Exception as e:
                 logger.error(f"Health check error for guild {guild_id}: {e}")
                 health_status[guild_id] = False
-
+        logger.debug(f"Health check results: {health_status}")
         return health_status

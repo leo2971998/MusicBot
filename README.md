@@ -78,8 +78,11 @@ If you prefer text commands, or if button-based interactions are unavailable for
       # Optional: how long the bot stays in voice when idle
       IDLE_DISCONNECT_DELAY=120
       ```
-      The timer is automatically cancelled if new songs are added before it expires.
-    - Configure any additional settings as needed (e.g., prefix, default volume).
+     The timer is automatically cancelled if new songs are added before it expires.
+   - Configure any additional settings as needed (e.g., prefix, default volume).
+   - **Enable Debug Logging (optional)**:
+     Set `LOG_LEVEL=DEBUG` in your environment or `config.json` to see detailed
+     debug messages for troubleshooting.
 
 5. **Run the Bot**
    ```bash

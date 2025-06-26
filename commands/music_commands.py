@@ -20,6 +20,7 @@ def setup_music_commands(client, queue_manager, player_manager, data_manager):
     @app_commands.describe(link="The URL or name of the song to play")
     async def play_command(interaction: discord.Interaction, link: str):
         """Play command"""
+        logger.debug(f"/play invoked by {interaction.user} in guild {interaction.guild_id} with link: {link}")
         await interaction.response.defer()
 
         try:
@@ -49,6 +50,7 @@ def setup_music_commands(client, queue_manager, player_manager, data_manager):
     @app_commands.describe(link="The URL or name of the song to play next")
     async def playnext_command(interaction: discord.Interaction, link: str):
         """Play next command"""
+        logger.debug(f"/playnext invoked by {interaction.user} in guild {interaction.guild_id} with link: {link}")
         await interaction.response.defer()
 
         try:
@@ -77,6 +79,9 @@ async def process_play_request(user, guild, channel, link, client, queue_manager
                                player_manager, data_manager, play_next=False, extra_meta=None):
     """Process a play request from various sources"""
     try:
+        logger.debug(
+            f"process_play_request called in guild {guild.id} by {user} with link: {link}"
+        )
         guild_id = str(guild.id)
         guild_data = client.guilds_data.get(guild_id)
 
@@ -259,6 +264,7 @@ async def _process_playlist(song_data, user, guild_id, client, queue_manager,
 async def _play_song(guild_id, song_info, client, player_manager, queue_manager, data_manager):
     """Play a specific song"""
     try:
+        logger.debug(f"_play_song called in guild {guild_id} with {song_info.get('title')}")
         voice_client = player_manager.voice_clients.get(guild_id)
         if not voice_client:
             logger.error(f"No voice client for guild {guild_id}")
@@ -299,6 +305,7 @@ async def _play_song(guild_id, song_info, client, player_manager, queue_manager,
 async def _play_next_song(guild_id, client, queue_manager, player_manager, data_manager):
     """Play the next song in queue"""
     try:
+        logger.debug(f"_play_next_song called in guild {guild_id}")
         playback_mode = client.playback_modes.get(guild_id, PlaybackMode.NORMAL)
 
         if playback_mode == PlaybackMode.REPEAT_ONE:
@@ -335,6 +342,7 @@ async def _play_next_song(guild_id, client, queue_manager, player_manager, data_
 async def _disconnect_after_delay(guild_id, player_manager, delay):
     """Disconnect after a delay if nothing is playing"""
     try:
+        logger.debug(f"_disconnect_after_delay scheduled for guild {guild_id} after {delay}s")
         await asyncio.sleep(delay)
         voice_client = player_manager.voice_clients.get(guild_id)
         if voice_client and not voice_client.is_playing():
@@ -349,6 +357,7 @@ async def _disconnect_after_delay(guild_id, player_manager, delay):
 async def _cleanup_interaction_message(interaction, delay=5):
     """Clean up interaction message after delay"""
     try:
+        logger.debug(f"Cleaning up interaction message in guild {interaction.guild_id} after {delay}s")
         await asyncio.sleep(delay)
         message = await interaction.original_response()
         await message.delete()
