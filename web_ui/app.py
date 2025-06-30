@@ -31,8 +31,6 @@ INDEX_TEMPLATE = """
   <button type="submit">Play</button>
 </form>
 """
-
-
 def start_web_ui(host: str = "0.0.0.0", port: int = 8080):
     """Start the web UI in a separate thread.
 
@@ -57,8 +55,6 @@ def index():
         from bot_state import queue_manager
         queue = queue_manager.get_queue(str(guild_id))
     return render_template_string(INDEX_TEMPLATE, guild_id=guild_id, queue=queue)
-
-
 @app.route('/queue/<int:guild_id>')
 def get_queue(guild_id):
     from bot_state import queue_manager
@@ -118,6 +114,3 @@ def play_song_view(data):
     future = asyncio.run_coroutine_threadsafe(coro, client.loop)
     result = future.result()
     return {'message': result}, 200
-
-
-
