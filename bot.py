@@ -150,6 +150,13 @@ def load_extensions():
 
 def main():
     load_extensions()
+    # Start optional web UI
+    try:
+        from web_ui import start_web_ui
+        start_web_ui()
+    except Exception as e:
+        logger.error(f'Failed to start web UI: {e}')
+
     token = TOKEN or os.getenv('DISCORD_TOKEN')
     if not token:
         raise RuntimeError('DISCORD_TOKEN is not set')
