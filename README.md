@@ -90,3 +90,58 @@ If you prefer text commands, or if button-based interactions are unavailable for
    ```
 
    Once the bot is running, invite it to your server using the OAuth2 link provided in the Discord Developer Portal.
+
+## Web UI
+
+A basic Flask-based web interface is included. It provides a small web page for managing playback and JSON endpoints for viewing the queue and adding new songs.
+
+Start the bot normally, and the web UI will be available at `http://localhost:8080`.
+
+Open `http://localhost:8080/?guild_id=YOUR_GUILD_ID` in a browser to view the queue and add songs.
+
+- `GET /queue/<guild_id>` – Returns the current queue for the guild.
+- `POST /play` – JSON endpoint to add a song. Requires `guild_id` and `query` fields.
+
+You can customize the host and port using the `WEB_UI_HOST` and `WEB_UI_PORT` environment variables.
+
+### Running with pm2
+
+If you prefer to keep the bot running with [pm2](https://pm2.keymetrics.io/),
+create an `ecosystem.config.js` file like the following (adjust the paths as
+needed):
+
+```js
+module.exports = {
+  apps: [{
+    name: 'musicbot',
+    script: './bot.py',
+    interpreter: '/home/leo29798/musicbot-env/bin/python',
+    cwd: '/home/leo29798/MusicBot',
+    env: {
+      PYTHONUNBUFFERED: '1',
+      NODE_ENV: 'production',
+      WEB_UI_HOST: '0.0.0.0',
+      WEB_UI_PORT: '8080'
+    },
+    error_file: './logs/err.log',
+    out_file: './logs/out.log',
+    log_file: './logs/combined.log',
+    time: true,
+    autorestart: true,
+    watch: false,
+    max_memory_restart: '1G',
+    restart_delay: 3000, // Wait 3s before restart
+    max_restarts: 10,    // Limit restart attempts
+    min_uptime: '10s'    // Must stay up 10s to be considered successful
+  }]
+};
+```
+
+This sample sets `WEB_UI_HOST` and `WEB_UI_PORT` so you can change the address
+where the Web UI is served.
+
+Start the bot under pm2 with:
+
+```bash
+pm2 start ecosystem.config.js
+```
