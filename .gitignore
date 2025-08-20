@@ -1,1 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.coverage
+.coverage.*
+.pytest_cache/
 
+# Environment
+.env
+.venv
+venv/
+ENV/
+
+# Data files
+guilds_data.json
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Discord
+youtube_cookies.txt

@@ -4,6 +4,9 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Maximum queue size to prevent memory issues
+MAX_QUEUE_SIZE = 100
+
 class QueueManager:
     """Manages music queues for all guilds"""
 
@@ -15,17 +18,24 @@ class QueueManager:
         return self.queues.get(guild_id, [])
 
     def add_song(self, guild_id: str, song_info: dict, play_next: bool = False) -> bool:
-        """Add a song to the queue"""
+        """Add a song to the queue with size limits"""
         try:
             if guild_id not in self.queues:
                 self.queues[guild_id] = []
 
-            if play_next:
-                self.queues[guild_id].insert(0, song_info)
-            else:
-                self.queues[guild_id].append(song_info)
+            queue = self.queues[guild_id]
+            
+            # Check queue size limit
+            if len(queue) >= MAX_QUEUE_SIZE:
+                logger.warning(f"Queue for guild {guild_id} is at maximum size ({MAX_QUEUE_SIZE})")
+                return False
 
-            logger.info(f"Added song '{song_info.get('title', 'Unknown')}' to guild {guild_id} queue")
+            if play_next:
+                queue.insert(0, song_info)
+            else:
+                queue.append(song_info)
+
+            logger.info(f"Added song '{song_info.get('title', 'Unknown')}' to guild {guild_id} queue (queue size: {len(queue)})")
             return True
 
         except Exception as e:

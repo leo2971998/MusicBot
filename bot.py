@@ -1,11 +1,13 @@
 import asyncio
 import logging
 import os
+import time
+import signal
 
 import discord
 
 from config import TOKEN, LOG_LEVEL, LOG_FORMAT, PlaybackMode
-from bot_state import client, data_manager, player_manager, queue_manager
+from bot_state import client, data_manager, player_manager, queue_manager, health_monitor
 
 # Setup logging
 logging.basicConfig(level=getattr(logging, LOG_LEVEL), format=LOG_FORMAT)
@@ -27,6 +29,23 @@ async def on_ready():
         logger.debug(f'Synced commands: {[cmd.name for cmd in synced]}')
     except Exception as e:
         logger.error(f'Failed to sync commands: {e}')
+    
+    # Start health monitoring system
+    try:
+        await health_monitor.start()
+        logger.info('Health monitoring system started')
+    except Exception as e:
+        logger.error(f'Failed to start health monitoring: {e}')
+
+
+@client.event
+async def on_disconnect():
+    """Handle bot disconnect gracefully"""
+    logger.warning('Bot disconnected, stopping health monitor')
+    try:
+        await health_monitor.stop()
+    except Exception as e:
+        logger.error(f'Error stopping health monitor: {e}')
 
 async def restore_guild_states():
     logger.debug('Restoring guild states')
@@ -74,19 +93,44 @@ async def restore_stable_message(guild_id: str, guild_data: dict, channel: disco
         logger.debug(f'Restoring stable message in guild {guild_id}')
         stable_message_id = guild_data.get('stable_message_id')
         stable_message = None
+        
+        # Initialize last activity timestamp
+        guild_data['last_activity'] = time.time()
+        
         if stable_message_id:
             try:
                 stable_message = await channel.fetch_message(int(stable_message_id))
+                logger.debug(f'Found existing stable message {stable_message_id} in guild {guild_id}')
             except discord.NotFound:
+                logger.info(f'Stable message {stable_message_id} not found, will create new one')
                 pass
+            except discord.Forbidden:
+                logger.error(f'No permission to fetch message {stable_message_id} in guild {guild_id}')
+                return False
+                
         if not stable_message:
-            stable_message = await channel.send('🎶 **Music Bot UI Initialized** 🎶')
-            guild_data['stable_message_id'] = stable_message.id
+            try:
+                stable_message = await channel.send('🎶 **Music Bot UI Initialized** 🎶')
+                guild_data['stable_message_id'] = stable_message.id
+                logger.info(f'Created new stable message {stable_message.id} in guild {guild_id}')
+            except discord.Forbidden:
+                logger.error(f'No permission to send messages in channel {channel.id} for guild {guild_id}')
+                return False
+                
         guild_data['stable_message'] = stable_message
 
-        # **FIX: Update the stable message with embeds and view**
+        # **FIX: Immediately update the stable message with embeds and view to ensure buttons work**
         from ui.embeds import update_stable_message
+        
+        # Add a small delay to ensure message is fully created
+        await asyncio.sleep(0.5)
+        
+        # Force update the message with proper embeds and interactive view
         await update_stable_message(guild_id)
+        logger.debug(f'Updated stable message {stable_message.id} with embeds and view in guild {guild_id}')
+        
+        # Ensure guild data is saved with the updated message info
+        await data_manager.save_guilds_data(client)
 
         return True
     except Exception as e:
@@ -160,7 +204,40 @@ def main():
     token = TOKEN or os.getenv('DISCORD_TOKEN')
     if not token:
         raise RuntimeError('DISCORD_TOKEN is not set')
-    client.run(token)
+    
+    # Add graceful shutdown handler
+    async def shutdown():
+        logger.info('Shutting down bot gracefully...')
+        try:
+            await health_monitor.stop()
+            # Disconnect all voice clients
+            for guild_id in list(player_manager.voice_clients.keys()):
+                await player_manager.disconnect_voice_client(guild_id, cleanup_tasks=True)
+            # Save final state
+            await data_manager.save_guilds_data(client)
+            logger.info('Graceful shutdown completed')
+        except Exception as e:
+            logger.error(f'Error during shutdown: {e}')
+    
+    # Register shutdown handler
+    import signal
+    
+    def signal_handler(signum, frame):
+        logger.info(f'Received signal {signum}, initiating shutdown...')
+        loop = asyncio.get_event_loop()
+        loop.create_task(shutdown())
+        loop.stop()
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    try:
+        client.run(token)
+    except KeyboardInterrupt:
+        logger.info('Bot stopped by keyboard interrupt')
+    except Exception as e:
+        logger.error(f'Bot crashed: {e}')
+        raise
 
 if __name__ == '__main__':
     main()

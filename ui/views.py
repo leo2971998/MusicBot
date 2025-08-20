@@ -20,7 +20,7 @@ class MusicControlView(View):
             item.disabled = True
 
     async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item):
-        """Handle interaction errors with detailed logging"""
+        """Handle interaction errors with detailed logging and recovery"""
         logger.error(f"Interaction error in guild {interaction.guild_id} for button '{item.label}': {error}")
         logger.error(f"Full traceback: {traceback.format_exc()}")
         logger.error(f"Interaction user: {interaction.user} ({interaction.user.id})")
@@ -28,20 +28,35 @@ class MusicControlView(View):
         logger.error(f"Interaction guild: {interaction.guild} ({interaction.guild.id if interaction.guild else 'None'})")
         logger.error(f"Is response done: {interaction.response.is_done()}")
 
+        # Attempt to recover from interaction error
+        error_message = f"❌ An error occurred while processing your request: {str(error)}"
+        
+        # Add helpful troubleshooting info for common errors
+        if "Guild data not found" in str(error):
+            error_message += "\n\n💡 Try running `/setup` to reinitialize the music bot in this channel."
+        elif "voice channel" in str(error).lower():
+            error_message += "\n\n💡 Make sure you're connected to a voice channel and the bot has permission to join."
+        elif "permission" in str(error).lower():
+            error_message += "\n\n💡 The bot may be missing required permissions. Please check Discord permissions."
+
         try:
             if not interaction.response.is_done():
-                await interaction.response.send_message(
-                    f"❌ An error occurred while processing your request: {str(error)}\nPlease check the logs and try again.",
-                    ephemeral=True
-                )
+                await interaction.response.send_message(error_message, ephemeral=True)
             else:
-                await interaction.followup.send(
-                    f"❌ An error occurred while processing your request: {str(error)}\nPlease check the logs and try again.",
-                    ephemeral=True
-                )
+                await interaction.followup.send(error_message, ephemeral=True)
         except Exception as followup_error:
             logger.error(f"Failed to send error message: {followup_error}")
             logger.error(f"Followup error traceback: {traceback.format_exc()}")
+            
+        # Attempt to update the stable message to refresh the UI
+        try:
+            from ui.embeds import update_stable_message
+            if interaction.guild:
+                guild_id = str(interaction.guild.id)
+                await update_stable_message(guild_id)
+                logger.debug(f"Refreshed stable message after error in guild {guild_id}")
+        except Exception as refresh_error:
+            logger.warning(f"Could not refresh stable message after error: {refresh_error}")
 
     async def _safe_interaction_response(self, interaction: discord.Interaction,
                                          message: str, ephemeral: bool = False):

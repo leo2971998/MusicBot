@@ -88,9 +88,16 @@ async def process_play_request(user, guild, channel, link, client, queue_manager
         if not guild_data or not guild_data.get('channel_id'):
             return "❌ Please run /setup to initialize the music channel first."
 
+        # Update activity timestamp to keep guild data fresh
+        import time
+        guild_data['last_activity'] = time.time()
+
         # Ensure user is a guild member
         if not isinstance(user, discord.Member):
-            user = guild.get_member(user.id) or await guild.fetch_member(user.id)
+            try:
+                user = guild.get_member(user.id) or await guild.fetch_member(user.id)
+            except discord.NotFound:
+                return "❌ Could not find your user information in this guild."
 
         # Check if user is in a voice channel
         if not user.voice or not user.voice.channel:
@@ -98,13 +105,21 @@ async def process_play_request(user, guild, channel, link, client, queue_manager
 
         user_voice_channel = user.voice.channel
 
-        # Get or create voice client
+        # Get or create voice client with enhanced error handling
         try:
             voice_client = await player_manager.get_or_create_voice_client(
                 guild_id, user_voice_channel
             )
+            if not voice_client:
+                return "❌ Could not connect to voice channel."
+        except discord.errors.ConnectionClosed:
+            return "❌ Voice connection was closed. Please try again."
+        except discord.errors.Forbidden:
+            return "❌ I don't have permission to join your voice channel."
         except Exception as e:
+            logger.error(f"Unexpected error connecting to voice channel: {e}")
             return f"❌ Could not connect to voice channel: {e}"
+            
         # Cancel any pending auto-disconnect while new music is queued
         player_manager.cancel_task(guild_id, "disconnect_task")
         notify_channel = None
@@ -206,12 +221,14 @@ async def _process_single_song(song_data, user, guild_id, client, queue_manager,
             await _play_song(guild_id, song_info, client, player_manager, queue_manager, data_manager)
             msg = f"🎶 Now playing: **{song_info.get('title', 'Unknown title')}**"
         else:
-            # Add to queue
-            queue_manager.add_song(guild_id, song_info, play_next)
-            if play_next:
-                msg = f"➕ Added to play next: **{song_info.get('title', 'Unknown title')}**"
+            # Add to queue with error handling for queue limits
+            if queue_manager.add_song(guild_id, song_info, play_next):
+                if play_next:
+                    msg = f"➕ Added to play next: **{song_info.get('title', 'Unknown title')}**"
+                else:
+                    msg = f"➕ Added to queue: **{song_info.get('title', 'Unknown title')}**"
             else:
-                msg = f"➕ Added to queue: **{song_info.get('title', 'Unknown title')}**"
+                msg = f"❌ Could not add song to queue. Queue may be full (max 100 songs) or there was an error."
 
         # Update UI
         from ui.embeds import update_stable_message
