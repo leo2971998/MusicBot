@@ -4,13 +4,16 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import yt_dlp as youtube_dl
-from config import YTDL_FORMAT_OPTS, FFMPEG_OPTIONS, PlaybackMode
+from config import YTDL_FORMAT_OPTS, FFMPEG_OPTIONS, PlaybackMode, FULL_METADATA_OPTS
 from utils.validators import is_setup
+from utils.search_cache import search_cache
+from utils.search_optimizer import search_optimizer
 
 logger = logging.getLogger(__name__)
 
-# Initialize YouTube DL
+# Initialize YouTube DL instances
 ytdl = youtube_dl.YoutubeDL(YTDL_FORMAT_OPTS)
+full_metadata_ytdl = youtube_dl.YoutubeDL(FULL_METADATA_OPTS)
 
 def setup_music_commands(client, queue_manager, player_manager, data_manager):
     """Setup music-related commands"""
@@ -234,34 +237,75 @@ async def process_play_request(user, guild, channel, link, client, queue_manager
         return "❌ An error occurred while processing your request."
 
 async def _extract_song_data(link, search_mode=False):
-    """Extract song data using yt-dlp"""
+    """Extract song data using optimized yt-dlp with caching and two-phase approach"""
     try:
-        loop = asyncio.get_running_loop()
-
         # Determine if it's a search or direct link
         is_search = 'list=' not in link and 'watch?v=' not in link and 'youtu.be/' not in link
         
         if is_search:
-            search_query = f"ytsearch5:{link}" if search_mode else f"ytsearch:{link}"
-            search_results = await loop.run_in_executor(
-                None, lambda: ytdl.extract_info(search_query, download=False)
-            )
-
-            if not search_results.get('entries'):
-                return None
-
+            # Check cache first
+            cached_result = search_cache.get(link, search_mode)
+            if cached_result is not None:
+                logger.debug(f"Returning cached results for query: {link}")
+                return cached_result
+            
+            # Preprocess query for better results
+            optimized_query = search_optimizer.preprocess_query(link)
+            
             if search_mode:
-                # Return multiple results for search mode
-                return search_results['entries']
+                # Use fast search for search mode (Phase 1)
+                search_results = await search_optimizer.fast_search(optimized_query, max_results=5)
+                
+                if search_results:
+                    # Cache the results
+                    search_cache.set(link, search_results, search_mode=True, ttl=1800)  # 30 minutes
+                    return search_results
+                else:
+                    # Fallback to regular search if fast search fails
+                    logger.debug(f"Fast search failed, using fallback for: {link}")
+                    fallback_results = await search_optimizer.search_with_fallback(optimized_query, max_results=5)
+                    if fallback_results:
+                        search_cache.set(link, fallback_results, search_mode=True, ttl=900)  # 15 minutes for fallback
+                        return fallback_results
             else:
-                # Get the best result by view count for direct play
-                best_result = max(search_results['entries'], key=lambda x: x.get('view_count', 0))
-                return best_result
+                # For direct play, use fast search and get the best result
+                search_results = await search_optimizer.fast_search(optimized_query, max_results=3)
+                
+                if search_results and len(search_results) > 0:
+                    # Get best result by view count, but ensure we have full metadata for playback
+                    best_result = max(search_results, key=lambda x: x.get('view_count', 0))
+                    
+                    # If it's a fast result, get full metadata for playback
+                    if best_result.get('_fast_result', False):
+                        full_metadata = await search_optimizer.get_full_metadata(best_result['webpage_url'])
+                        if full_metadata:
+                            best_result = full_metadata
+                    
+                    # Cache the result
+                    search_cache.set(link, best_result, search_mode=False, ttl=3600)  # 1 hour
+                    return best_result
+                else:
+                    # Fallback to regular search
+                    logger.debug(f"Fast search failed for direct play, using fallback for: {link}")
+                    loop = asyncio.get_running_loop()
+                    search_query = f"ytsearch:{optimized_query}"
+                    search_results = await loop.run_in_executor(
+                        None, lambda: full_metadata_ytdl.extract_info(search_query, download=False)
+                    )
+                    
+                    if search_results and search_results.get('entries'):
+                        best_result = max(search_results['entries'], key=lambda x: x.get('view_count', 0))
+                        search_cache.set(link, best_result, search_mode=False, ttl=1800)  # 30 minutes
+                        return best_result
         else:
-            # Direct link
-            return await loop.run_in_executor(
-                None, lambda: ytdl.extract_info(link, download=False)
+            # Direct link - use full metadata extraction
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None, lambda: full_metadata_ytdl.extract_info(link, download=False)
             )
+            return result
+
+        return None
 
     except Exception as e:
         logger.error(f"Error extracting song data: {e}")

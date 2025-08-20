@@ -203,6 +203,15 @@ class HealthMonitor:
             voice_client = self.player_manager.voice_clients.get(guild_id)
             if voice_client and voice_client.is_connected():
                 self.client.guilds_data[guild_id]['last_activity'] = current_time
+        
+        # Clean up expired search cache entries
+        try:
+            from utils.search_cache import search_cache
+            expired_count = search_cache.clear_expired()
+            if expired_count > 0:
+                logger.debug(f"Cleaned up {expired_count} expired search cache entries")
+        except Exception as e:
+            logger.warning(f"Error cleaning up search cache: {e}")
                 
         # Force garbage collection for Python objects
         import gc
@@ -234,12 +243,21 @@ class HealthMonitor:
             guild_data_count = len(self.client.guilds_data)
             total_queue_size = sum(len(queue) for queue in self.queue_manager.queues.values())
             
+            # Get search cache stats
+            cache_stats = {"active_entries": 0, "memory_usage": "0B"}
+            try:
+                from utils.search_cache import search_cache
+                cache_stats = search_cache.get_stats()
+            except Exception as e:
+                logger.debug(f"Could not get cache stats: {e}")
+            
             logger.info(f"Memory stats - Process: {memory_info.rss / 1024 / 1024:.1f}MB, "
                        f"System: {system_memory.percent:.1f}% used, "
                        f"Voice clients: {voice_clients}, "
                        f"Active tasks: {active_tasks}, "
                        f"Guild data: {guild_data_count}, "
-                       f"Queue items: {total_queue_size}")
+                       f"Queue items: {total_queue_size}, "
+                       f"Cache entries: {cache_stats['active_entries']} ({cache_stats['memory_usage']})")
                        
         except ImportError:
             # psutil not available, just log basic stats
