@@ -189,8 +189,18 @@ def create_now_playing_embed(guild_id: str, guild_data: dict) -> Embed:
             if current_song.get('thumbnail'):
                 embed.set_thumbnail(url=current_song['thumbnail'])
 
-            embed.add_field(name='Duration', value=duration_str, inline=False)
-            embed.add_field(name='Requested by', value=current_song.get('requester', 'Unknown'), inline=False)
+            embed.add_field(name='Duration', value=duration_str, inline=True)
+            embed.add_field(name='Requested by', value=current_song.get('requester', 'Unknown'), inline=True)
+
+            # Add vote status if there are any votes
+            if voice_client.channel:
+                from utils.vote_manager import VoteManager
+                vote_status = VoteManager.get_vote_status(guild_data, voice_client.channel)
+                
+                if vote_status['current_votes'] > 0:
+                    progress_bar = "▓" * vote_status['current_votes'] + "░" * (vote_status['required_votes'] - vote_status['current_votes'])
+                    vote_text = f"🗳️ **{vote_status['current_votes']}/{vote_status['required_votes']}** votes to skip\n`{progress_bar}` {vote_status['percentage']}%"
+                    embed.add_field(name='Vote Skip Progress', value=vote_text, inline=False)
 
             playback_mode = client.playback_modes.get(guild_id)
             if playback_mode:
