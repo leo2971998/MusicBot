@@ -150,10 +150,14 @@ class ModalSearchResultSelect(discord.ui.Select):
             )
 
 class AddSongModal(Modal):
-    def __init__(self, play_next: bool = False):
-        title = "Play Next" if play_next else "Add Song"
+    def __init__(self, play_next: bool = False, preview_mode: bool = True):
+        if play_next:
+            title = "Play Next"
+        else:
+            title = "Add Song (Preview)" if preview_mode else "Add Song (Normal)"
         super().__init__(title=title)
         self.play_next = play_next
+        self.preview_mode = preview_mode
 
         self.song_input = TextInput(
             label="Song Name or URL",
@@ -192,25 +196,53 @@ class AddSongModal(Modal):
                 if response_message:
                     await interaction.followup.send(response_message, ephemeral=True)
             else:
-                # Handle as search query - new behavior
-                search_results = await _extract_song_data(song_name_or_url, search_mode=True)
-                
-                if not search_results or len(search_results) == 0:
-                    await interaction.followup.send("❌ No search results found.", ephemeral=True)
-                    return
+                # Handle as search query
+                if self.preview_mode:
+                    # Preview mode - show search results for user selection
+                    search_results = await _extract_song_data(song_name_or_url, search_mode=True)
+                    
+                    if not search_results or len(search_results) == 0:
+                        await interaction.followup.send("❌ No search results found.", ephemeral=True)
+                        return
 
-                # Create search results view and embed
-                from ui.search_view import create_search_results_embed
-                
-                view = ModalSearchResultsView(search_results, self.play_next)
-                embed = create_search_results_embed(search_results, song_name_or_url)
-                
-                # Update embed title to reflect the action
-                action_text = "Play Next" if self.play_next else "Add Song"
-                embed.title = f"🔍 Search Results - {action_text}"
-                
-                # Send search results as persistent message
-                await interaction.followup.send(embed=embed, view=view, ephemeral=False)
+                    # Create search results view and embed
+                    from ui.search_view import create_search_results_embed
+                    
+                    view = ModalSearchResultsView(search_results, self.play_next)
+                    embed = create_search_results_embed(search_results, song_name_or_url)
+                    
+                    # Update embed title to reflect the action
+                    action_text = "Play Next" if self.play_next else "Add Song (Preview)"
+                    embed.title = f"🔍 Search Results - {action_text}"
+                    
+                    # Send search results as persistent message
+                    await interaction.followup.send(embed=embed, view=view, ephemeral=False)
+                else:
+                    # Normal mode - auto-select best result
+                    best_result = await _extract_song_data(song_name_or_url, search_mode=False)
+                    
+                    if not best_result:
+                        await interaction.followup.send("❌ No search results found.", ephemeral=True)
+                        return
+                    
+                    # Process the best result directly
+                    response_message = await process_play_request(
+                        interaction.user,
+                        interaction.guild,
+                        interaction.channel,
+                        best_result.get('webpage_url', best_result.get('url')),
+                        client,
+                        queue_manager,
+                        player_manager,
+                        data_manager,
+                        play_next=self.play_next
+                    )
+                    
+                    action_text = "Play Next" if self.play_next else "Add Song (Normal)"
+                    await interaction.followup.send(
+                        f"🎵 {action_text} - Auto-selected: **{best_result.get('title', 'Unknown')}**\n{response_message}",
+                        ephemeral=True
+                    )
 
         except Exception as e:
             logger.error(f"Error in AddSongModal: {e}")

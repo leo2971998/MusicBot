@@ -310,16 +310,29 @@ class MusicControlView(View):
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise
 
-    @discord.ui.button(label='➕ Add Song', style=ButtonStyle.success)
-    async def add_song_button(self, interaction: discord.Interaction, button: Button):
+    @discord.ui.button(label='🔍 Add Song (Preview)', style=ButtonStyle.success)
+    async def add_song_preview_button(self, interaction: discord.Interaction, button: Button):
         try:
             from ui.modals import AddSongModal
-            logger.debug(f"Add song button clicked in guild {interaction.guild_id} by user {interaction.user}")
-            modal = AddSongModal()
+            logger.debug(f"Add song preview button clicked in guild {interaction.guild_id} by user {interaction.user}")
+            modal = AddSongModal(preview_mode=True)
             await interaction.response.send_modal(modal)
-            logger.debug(f"Successfully sent modal for add song in guild {interaction.guild_id}")
+            logger.debug(f"Successfully sent modal for add song preview in guild {interaction.guild_id}")
         except Exception as e:
-            logger.error(f"Error in add_song_button: {e}")
+            logger.error(f"Error in add_song_preview_button: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise
+
+    @discord.ui.button(label='🎵 Add Song (Normal)', style=ButtonStyle.success)
+    async def add_song_normal_button(self, interaction: discord.Interaction, button: Button):
+        try:
+            from ui.modals import AddSongModal
+            logger.debug(f"Add song normal button clicked in guild {interaction.guild_id} by user {interaction.user}")
+            modal = AddSongModal(preview_mode=False)
+            await interaction.response.send_modal(modal)
+            logger.debug(f"Successfully sent modal for add song normal in guild {interaction.guild_id}")
+        except Exception as e:
+            logger.error(f"Error in add_song_normal_button: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise
 
