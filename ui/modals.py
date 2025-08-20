@@ -60,6 +60,15 @@ class ModalSearchResultsView(discord.ui.View):
             # Disable all items
             for item in self.children:
                 item.disabled = True
+            
+            # Clean up channel messages after timeout
+            # Note: This is a fallback cleanup in case user doesn't make a selection
+            try:
+                # We can't access interaction here, but we can try to clean up if we have a stored guild_id
+                # For now, we'll rely on the main cleanup in the callback method
+                pass
+            except Exception as e:
+                logger.error(f"Error during timeout cleanup: {e}")
 
 class ModalSearchResultSelect(discord.ui.Select):
     """Dropdown for selecting search results in modal context"""
@@ -117,6 +126,21 @@ class ModalSearchResultSelect(discord.ui.Select):
                 await interaction.edit_original_response(view=self.view)
             except discord.NotFound:
                 pass  # Message might have been deleted
+            
+            # Clean up channel messages after successful selection
+            guild_id = str(interaction.guild.id)
+            from bot_state import client
+            guild_data = client.guilds_data.get(guild_id)
+            if guild_data:
+                from utils.message_utils import clear_channel_messages
+                channel_id = guild_data.get('channel_id')
+                stable_message_id = guild_data.get('stable_message_id')
+                if channel_id and stable_message_id:
+                    channel = client.get_channel(int(channel_id))
+                    if channel:
+                        # Small delay to ensure message update completes, then cleanup
+                        await asyncio.sleep(1)
+                        await clear_channel_messages(channel, int(stable_message_id))
                 
         except Exception as e:
             logger.error(f"Error in modal search result selection: {e}")
@@ -185,21 +209,8 @@ class AddSongModal(Modal):
                 action_text = "Play Next" if self.play_next else "Add Song"
                 embed.title = f"🔍 Search Results - {action_text}"
                 
-                # Send search results
-                await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-
-            # Clean up channel messages
-            guild_id = str(interaction.guild.id)
-            guild_data = client.guilds_data.get(guild_id)
-            if guild_data:
-                from utils.message_utils import clear_channel_messages
-                channel_id = guild_data.get('channel_id')
-                stable_message_id = guild_data.get('stable_message_id')
-                if channel_id and stable_message_id:
-                    channel = client.get_channel(int(channel_id))
-                    if channel:
-                        await asyncio.sleep(5)
-                        await clear_channel_messages(channel, int(stable_message_id))
+                # Send search results as persistent message
+                await interaction.followup.send(embed=embed, view=view, ephemeral=False)
 
         except Exception as e:
             logger.error(f"Error in AddSongModal: {e}")
