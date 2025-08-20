@@ -31,6 +31,38 @@ YTDL_FORMAT_OPTS = {
     'source_address': '0.0.0.0',
 }
 
+# Fast search options for Phase 1 (basic search with minimal metadata)
+FAST_SEARCH_OPTS = {
+    'format': 'bestaudio/best',
+    'quiet': True,
+    'no_warnings': True,
+    'extract_flat': True,  # Don't extract full metadata
+    'skip_download': True,
+    'writeinfojson': False,
+    'writethumbnail': False,
+    'writesubtitles': False,
+    'writeautomaticsub': False,
+    'ignoreerrors': True,
+    'no_check_certificate': True,
+    'default_search': 'auto',
+    'source_address': '0.0.0.0',
+}
+
+# Full metadata options for Phase 2 (when user selects a song)
+FULL_METADATA_OPTS = {
+    'format': 'bestaudio/best',
+    'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
+    'restrictfilenames': True,
+    'noplaylist': True,
+    'nocheckcertificate': True,
+    'ignoreerrors': False,
+    'logtostderr': False,
+    'quiet': True,
+    'no_warnings': True,
+    'default_search': 'auto',
+    'source_address': '0.0.0.0',
+}
+
 class PlaybackMode(Enum):
     NORMAL = "Normal"
     REPEAT_ONE = "Repeat"

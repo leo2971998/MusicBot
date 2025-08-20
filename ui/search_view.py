@@ -74,6 +74,26 @@ class SearchResultSelect(Select):
             self.view.selected_index = selected_index
             self.view.selection_made = True
             
+            # Check if we need to get full metadata (Phase 2)
+            song_url = selected_result.get('webpage_url', selected_result.get('url'))
+            
+            if selected_result.get('_fast_result', False):
+                # This is a fast result, we need full metadata for playback
+                await interaction.response.defer(ephemeral=True)
+                
+                from utils.search_optimizer import search_optimizer
+                full_metadata = await search_optimizer.get_full_metadata(song_url)
+                
+                if full_metadata:
+                    # Replace the fast result with full metadata
+                    selected_result = full_metadata
+                    song_url = full_metadata.get('webpage_url', full_metadata.get('url'))
+                else:
+                    # Fallback to original URL if full metadata extraction fails
+                    logger.warning(f"Failed to get full metadata for {song_url}, using original data")
+            else:
+                await interaction.response.defer(ephemeral=True)
+            
             # Process the selected song
             from commands.music_commands import process_play_request
             from bot_state import client, queue_manager, player_manager, data_manager
@@ -83,7 +103,7 @@ class SearchResultSelect(Select):
                 interaction.user,
                 interaction.guild,
                 interaction.channel,
-                selected_result.get('webpage_url', selected_result.get('url')),
+                song_url,
                 client,
                 queue_manager,
                 player_manager,
@@ -91,7 +111,7 @@ class SearchResultSelect(Select):
             )
             
             # Send response
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"🎵 Selected: **{selected_result.get('title', 'Unknown')}**\n{response_message}",
                 ephemeral=True
             )
