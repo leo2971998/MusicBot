@@ -284,3 +284,148 @@ class RemoveSongModal(Modal):
                 )
         except Exception:
             pass
+
+class SearchPreviewModal(Modal):
+    """Modal for search with preview functionality"""
+    
+    def __init__(self):
+        super().__init__(title="🔍 Search & Preview")
+
+        self.search_input = TextInput(
+            label="Search Query",
+            placeholder="Enter song name, artist, or keywords to search...",
+            required=True,
+            max_length=500
+        )
+        self.add_item(self.search_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        logger.debug(f"SearchPreviewModal submitted in guild {interaction.guild_id}")
+        await interaction.response.defer(thinking=True)
+
+        search_query = self.search_input.value.strip()
+
+        try:
+            # Import here to avoid circular imports
+            from commands.music_commands import _extract_song_data
+            from ui.search_view import SearchResultsView, create_search_results_embed
+
+            # Get search results using preview mode
+            search_results = await _extract_song_data(search_query, search_mode=True)
+            
+            if not search_results or len(search_results) == 0:
+                await interaction.followup.send("❌ No search results found.", ephemeral=True)
+                return
+
+            # Create search results view and embed
+            view = SearchResultsView(search_results)
+            embed = create_search_results_embed(search_results, search_query)
+            
+            # Send search results
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+        except Exception as e:
+            logger.error(f"Error in SearchPreviewModal: {e}")
+            await interaction.followup.send("❌ An error occurred while searching.", ephemeral=True)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        logger.error(f"Search preview modal error: {error}")
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "❌ An error occurred while processing your search.",
+                    ephemeral=True
+                )
+        except Exception:
+            pass
+
+class QuickPlayModal(Modal):
+    """Modal for quick play functionality"""
+    
+    def __init__(self):
+        super().__init__(title="⚡ Quick Play")
+
+        self.search_input = TextInput(
+            label="Search Query",
+            placeholder="Enter song name, artist, or keywords for instant play...",
+            required=True,
+            max_length=500
+        )
+        self.add_item(self.search_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        logger.debug(f"QuickPlayModal submitted in guild {interaction.guild_id}")
+        await interaction.response.defer(thinking=True)
+
+        search_query = self.search_input.value.strip()
+
+        try:
+            # Import here to avoid circular imports
+            from commands.music_commands import _extract_song_data, process_play_request
+            from bot_state import client, queue_manager, player_manager, data_manager
+            from utils.search_optimizer import search_optimizer
+            from utils.search_cache import search_cache
+
+            # Show searching message
+            await interaction.followup.send(f"⚡ Quick playing: **{search_query}**...", ephemeral=True)
+            
+            # Get the best result directly using optimized search (same logic as /quickplay command)
+            optimized_query = search_optimizer.preprocess_query(search_query)
+            cached_result = search_cache.get(search_query, search_mode=False)
+            
+            if cached_result:
+                logger.debug(f"Using cached result for quickplay query: {search_query}")
+                best_result = cached_result
+            else:
+                # Get fresh result
+                best_result = await search_optimizer.get_best_result(optimized_query)
+                
+                if not best_result:
+                    # Fallback to multi-result search and pick the best
+                    search_results = await _extract_song_data(search_query, search_mode=True)
+                    if search_results and len(search_results) > 0:
+                        best_result = max(search_results, key=lambda x: x.get('view_count', 0))
+                    else:
+                        await interaction.edit_original_response(content="❌ No search results found.")
+                        return
+                
+                # Cache the single result
+                if best_result:
+                    search_cache.set(search_query, best_result, search_mode=False, ttl=3600)  # 1 hour
+            
+            logger.debug(f"Auto-selected best result for quickplay: {best_result.get('title')} with {best_result.get('view_count', 0):,} views")
+            
+            # Process the best result immediately
+            response_message = await process_play_request(
+                interaction.user,
+                interaction.guild,
+                interaction.channel,
+                best_result.get('webpage_url', best_result.get('url')),
+                client,
+                queue_manager,
+                player_manager,
+                data_manager
+            )
+            
+            # Update message to show what was selected and played
+            try:
+                await interaction.edit_original_response(
+                    content=f"⚡ Quick played: **{best_result.get('title', 'Unknown')}** by **{best_result.get('uploader', 'Unknown Artist')}**\n{response_message}"
+                )
+            except discord.NotFound:
+                pass  # Message might have been deleted
+
+        except Exception as e:
+            logger.error(f"Error in QuickPlayModal: {e}")
+            await interaction.followup.send("❌ An error occurred while quick playing.", ephemeral=True)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        logger.error(f"Quick play modal error: {error}")
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "❌ An error occurred while processing your quick play.",
+                    ephemeral=True
+                )
+        except Exception:
+            pass

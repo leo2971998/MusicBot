@@ -84,6 +84,72 @@ def setup_music_commands(client, queue_manager, player_manager, data_manager):
             logger.error(f"Error in search command: {e}")
             await interaction.followup.send("❌ An error occurred while searching.", ephemeral=True)
 
+    @client.tree.command(name="quickplay", description="Quickly play the most viewed search result")
+    @is_setup()
+    @app_commands.describe(query="Search query for finding music")
+    async def quickplay_command(interaction: discord.Interaction, query: str):
+        """Quick play command - auto-selects most viewed result for speed"""
+        logger.debug(f"/quickplay invoked by {interaction.user} in guild {interaction.guild_id} with query: {query}")
+        await interaction.response.defer()
+
+        try:
+            # Show searching message
+            await interaction.followup.send(f"⚡ Quick playing: **{query}**...", ephemeral=True)
+            
+            # Get the best result directly using optimized search
+            from utils.search_optimizer import search_optimizer
+            
+            # Check cache first
+            from utils.search_cache import search_cache
+            optimized_query = search_optimizer.preprocess_query(query)
+            cached_result = search_cache.get(query, search_mode=False)  # Check for single result cache
+            
+            if cached_result:
+                logger.debug(f"Using cached result for quickplay query: {query}")
+                best_result = cached_result
+            else:
+                # Get fresh result
+                best_result = await search_optimizer.get_best_result(optimized_query)
+                
+                if not best_result:
+                    # Fallback to multi-result search and pick the best
+                    search_results = await _extract_song_data(query, search_mode=True)
+                    if search_results and len(search_results) > 0:
+                        best_result = max(search_results, key=lambda x: x.get('view_count', 0))
+                    else:
+                        await interaction.edit_original_response(content="❌ No search results found.")
+                        return
+                
+                # Cache the single result
+                if best_result:
+                    search_cache.set(query, best_result, search_mode=False, ttl=3600)  # 1 hour
+            
+            logger.debug(f"Auto-selected best result for quickplay: {best_result.get('title')} with {best_result.get('view_count', 0):,} views")
+            
+            # Process the best result immediately
+            response_message = await process_play_request(
+                interaction.user,
+                interaction.guild,
+                interaction.channel,
+                best_result.get('webpage_url', best_result.get('url')),
+                client,
+                queue_manager,
+                player_manager,
+                data_manager
+            )
+            
+            # Update message to show what was selected and played
+            try:
+                await interaction.edit_original_response(
+                    content=f"⚡ Quick played: **{best_result.get('title', 'Unknown')}** by **{best_result.get('uploader', 'Unknown Artist')}**\n{response_message}"
+                )
+            except discord.NotFound:
+                pass  # Message might have been deleted
+
+        except Exception as e:
+            logger.error(f"Error in quickplay command: {e}")
+            await interaction.followup.send("❌ An error occurred while quick playing.", ephemeral=True)
+
     @client.tree.command(name="search_preview", description="Search for music with preview and manual selection")
     @is_setup()
     @app_commands.describe(query="Search query for finding music")

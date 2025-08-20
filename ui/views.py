@@ -310,6 +310,32 @@ class MusicControlView(View):
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise
 
+    @discord.ui.button(label='🔍 Search & Preview', style=ButtonStyle.success)
+    async def search_preview_button(self, interaction: discord.Interaction, button: Button):
+        try:
+            from ui.modals import SearchPreviewModal
+            logger.debug(f"Search & Preview button clicked in guild {interaction.guild_id} by user {interaction.user}")
+            modal = SearchPreviewModal()
+            await interaction.response.send_modal(modal)
+            logger.debug(f"Successfully sent search preview modal in guild {interaction.guild_id}")
+        except Exception as e:
+            logger.error(f"Error in search_preview_button: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise
+
+    @discord.ui.button(label='⚡ Quick Play', style=ButtonStyle.success)
+    async def quick_play_button(self, interaction: discord.Interaction, button: Button):
+        try:
+            from ui.modals import QuickPlayModal
+            logger.debug(f"Quick Play button clicked in guild {interaction.guild_id} by user {interaction.user}")
+            modal = QuickPlayModal()
+            await interaction.response.send_modal(modal)
+            logger.debug(f"Successfully sent quick play modal in guild {interaction.guild_id}")
+        except Exception as e:
+            logger.error(f"Error in quick_play_button: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise
+
     @discord.ui.button(label='➕ Add Song', style=ButtonStyle.success)
     async def add_song_button(self, interaction: discord.Interaction, button: Button):
         try:
