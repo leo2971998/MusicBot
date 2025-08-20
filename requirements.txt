@@ -5,3 +5,5 @@ python-dotenv
 requests
 ffmpeg
 Flask
+google-api-python-client
+aiohttp

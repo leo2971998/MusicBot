@@ -4,13 +4,16 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import yt_dlp as youtube_dl
-from config import YTDL_FORMAT_OPTS, FFMPEG_OPTIONS, PlaybackMode
+from config import YTDL_FORMAT_OPTS, YTDL_SEARCH_OPTS, FFMPEG_OPTIONS, PlaybackMode
 from utils.validators import is_setup
+from utils.youtube_api import fast_youtube_search
+from utils.cache import get_cached_search, cache_search_results
 
 logger = logging.getLogger(__name__)
 
 # Initialize YouTube DL
 ytdl = youtube_dl.YoutubeDL(YTDL_FORMAT_OPTS)
+ytdl_search = youtube_dl.YoutubeDL(YTDL_SEARCH_OPTS)
 
 def setup_music_commands(client, queue_manager, player_manager, data_manager):
     """Setup music-related commands"""
@@ -234,7 +237,7 @@ async def process_play_request(user, guild, channel, link, client, queue_manager
         return "❌ An error occurred while processing your request."
 
 async def _extract_song_data(link, search_mode=False):
-    """Extract song data using yt-dlp"""
+    """Extract song data using optimized search with YouTube API + caching + yt-dlp fallback"""
     try:
         loop = asyncio.get_running_loop()
 
@@ -242,23 +245,19 @@ async def _extract_song_data(link, search_mode=False):
         is_search = 'list=' not in link and 'watch?v=' not in link and 'youtu.be/' not in link
         
         if is_search:
-            search_query = f"ytsearch5:{link}" if search_mode else f"ytsearch:{link}"
-            search_results = await loop.run_in_executor(
-                None, lambda: ytdl.extract_info(search_query, download=False)
-            )
-
-            if not search_results.get('entries'):
-                return None
-
             if search_mode:
-                # Return multiple results for search mode
-                return search_results['entries']
+                # Use optimized search for search mode
+                return await _fast_search(link)
             else:
-                # Get the best result by view count for direct play
-                best_result = max(search_results['entries'], key=lambda x: x.get('view_count', 0))
-                return best_result
+                # For direct play, use fast search and pick best result
+                search_results = await _fast_search(link, max_results=5)
+                if search_results:
+                    # Get the best result by view count for direct play
+                    best_result = max(search_results, key=lambda x: x.get('view_count', 0))
+                    return best_result
+                return None
         else:
-            # Direct link
+            # Direct link - use full yt-dlp extraction
             return await loop.run_in_executor(
                 None, lambda: ytdl.extract_info(link, download=False)
             )
@@ -267,11 +266,143 @@ async def _extract_song_data(link, search_mode=False):
         logger.error(f"Error extracting song data: {e}")
         return None
 
+
+async def _fast_search(query: str, max_results: int = 5) -> list:
+    """
+    Fast search using YouTube API + caching with yt-dlp fallback.
+    Returns list of search results.
+    """
+    import time
+    start_time = time.time()
+    
+    try:
+        # Check cache first
+        cached_results = await get_cached_search(query)
+        if cached_results:
+            search_time = time.time() - start_time
+            logger.info(f"Cache hit for query '{query}' in {search_time:.3f}s")
+            return cached_results[:max_results]
+        
+        # Try YouTube Data API first
+        api_results = await fast_youtube_search(query, max_results)
+        if api_results:
+            # Cache the results
+            await cache_search_results(query, api_results)
+            search_time = time.time() - start_time
+            logger.info(f"YouTube API search for '{query}' completed in {search_time:.3f}s")
+            return api_results
+        
+        # Fallback to yt-dlp if API fails
+        logger.info(f"Falling back to yt-dlp search for query: {query}")
+        return await _ytdlp_fallback_search(query, max_results)
+        
+    except Exception as e:
+        logger.error(f"Error in fast search: {e}")
+        return await _ytdlp_fallback_search(query, max_results)
+
+
+async def _ytdlp_fallback_search(query: str, max_results: int = 5) -> list:
+    """Fallback to yt-dlp search with optimized settings"""
+    import time
+    start_time = time.time()
+    
+    try:
+        loop = asyncio.get_running_loop()
+        search_query = f"ytsearch{max_results}:{query}"
+        
+        # Use optimized yt-dlp settings for search
+        search_results = await loop.run_in_executor(
+            None, lambda: ytdl_search.extract_info(search_query, download=False)
+        )
+        
+        if not search_results or not search_results.get('entries'):
+            return []
+        
+        results = search_results['entries']
+        
+        # For each result, we need to get full metadata using regular ytdl
+        # But only when the user actually selects it (not during search)
+        # For now, return the basic info and enhance on selection
+        enhanced_results = []
+        for result in results:
+            if result:  # Sometimes entries can be None
+                enhanced_result = {
+                    'id': result.get('id', ''),
+                    'title': result.get('title', 'Unknown Title'),
+                    'uploader': result.get('uploader', result.get('channel', 'Unknown Artist')),
+                    'duration': result.get('duration', 0),
+                    'view_count': result.get('view_count', 0),
+                    'webpage_url': result.get('webpage_url', f"https://www.youtube.com/watch?v={result.get('id', '')}"),
+                    'thumbnail': result.get('thumbnail'),
+                    'description': result.get('description', ''),
+                    'source': 'yt-dlp'
+                }
+                enhanced_results.append(enhanced_result)
+        
+        # Cache the results
+        if enhanced_results:
+            await cache_search_results(query, enhanced_results)
+        
+        search_time = time.time() - start_time
+        logger.info(f"yt-dlp fallback search for '{query}' completed in {search_time:.3f}s")
+        
+        return enhanced_results
+        
+    except Exception as e:
+        search_time = time.time() - start_time
+        logger.error(f"yt-dlp fallback search failed after {search_time:.3f}s: {e}")
+        return []
+
+
+async def _get_full_song_metadata(song_url: str) -> dict:
+    """
+    Get full song metadata for final playback.
+    This is called when user selects a song to get the actual stream URL and full metadata.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        
+        # Use full yt-dlp extraction for selected song
+        result = await loop.run_in_executor(
+            None, lambda: ytdl.extract_info(song_url, download=False)
+        )
+        
+        if result:
+            logger.debug(f"Full metadata extracted for: {result.get('title', 'Unknown')}")
+            return result
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error getting full song metadata: {e}")
+        return None
+
 async def _process_single_song(song_data, user, guild_id, client, queue_manager,
                                player_manager, data_manager, play_next, extra_meta):
     """Process a single song"""
     try:
-        song_info = song_data.copy()
+        # Check if we need to get full metadata (from fast search results)
+        if song_data.get('source') in ['youtube_api', 'yt-dlp'] and not song_data.get('url'):
+            # This is a search result, need to get full metadata
+            webpage_url = song_data.get('webpage_url')
+            if webpage_url:
+                logger.debug(f"Getting full metadata for selected song: {song_data.get('title')}")
+                full_metadata = await _get_full_song_metadata(webpage_url)
+                if full_metadata:
+                    # Merge the metadata, keeping some original data
+                    song_info = full_metadata.copy()
+                    # Keep the original title and uploader if they exist (for consistency)
+                    if song_data.get('title'):
+                        song_info['title'] = song_data['title']
+                    if song_data.get('uploader'):
+                        song_info['uploader'] = song_data['uploader']
+                else:
+                    song_info = song_data.copy()
+            else:
+                song_info = song_data.copy()
+        else:
+            song_info = song_data.copy()
+            
         song_info['requester'] = user.mention
 
         if extra_meta:
