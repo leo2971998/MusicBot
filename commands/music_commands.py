@@ -18,12 +18,78 @@ full_metadata_ytdl = youtube_dl.YoutubeDL(FULL_METADATA_OPTS)
 def setup_music_commands(client, queue_manager, player_manager, data_manager):
     """Setup music-related commands"""
 
-    @client.tree.command(name="search", description="Search for music and preview results before playing")
+    @client.tree.command(name="search", description="Search for music and auto-play the most viewed result")
     @is_setup()
     @app_commands.describe(query="Search query for finding music")
     async def search_command(interaction: discord.Interaction, query: str):
-        """Search command with preview"""
+        """Search command with auto-selection of most viewed result"""
         logger.debug(f"/search invoked by {interaction.user} in guild {interaction.guild_id} with query: {query}")
+        await interaction.response.defer()
+
+        try:
+            # Show searching message
+            await interaction.followup.send(f"🔍 Searching for: **{query}**...", ephemeral=True)
+            
+            # Get the best result directly using optimized search
+            from utils.search_optimizer import search_optimizer
+            
+            # Check cache first
+            from utils.search_cache import search_cache
+            optimized_query = search_optimizer.preprocess_query(query)
+            cached_result = search_cache.get(query, search_mode=False)  # Check for single result cache
+            
+            if cached_result:
+                logger.debug(f"Using cached result for query: {query}")
+                best_result = cached_result
+            else:
+                # Get fresh result
+                best_result = await search_optimizer.get_best_result(optimized_query)
+                
+                if not best_result:
+                    # Fallback to multi-result search and pick the best
+                    search_results = await _extract_song_data(query, search_mode=True)
+                    if search_results and len(search_results) > 0:
+                        best_result = max(search_results, key=lambda x: x.get('view_count', 0))
+                    else:
+                        await interaction.edit_original_response(content="❌ No search results found.")
+                        return
+                
+                # Cache the single result
+                if best_result:
+                    search_cache.set(query, best_result, search_mode=False, ttl=3600)  # 1 hour
+            
+            logger.debug(f"Auto-selected best result: {best_result.get('title')} with {best_result.get('view_count', 0):,} views")
+            
+            # Process the best result immediately
+            response_message = await process_play_request(
+                interaction.user,
+                interaction.guild,
+                interaction.channel,
+                best_result.get('webpage_url', best_result.get('url')),
+                client,
+                queue_manager,
+                player_manager,
+                data_manager
+            )
+            
+            # Update message to show what was selected and played
+            try:
+                await interaction.edit_original_response(
+                    content=f"🎶 Found and playing: **{best_result.get('title', 'Unknown')}** by **{best_result.get('uploader', 'Unknown Artist')}**\n{response_message}"
+                )
+            except discord.NotFound:
+                pass  # Message might have been deleted
+
+        except Exception as e:
+            logger.error(f"Error in search command: {e}")
+            await interaction.followup.send("❌ An error occurred while searching.", ephemeral=True)
+
+    @client.tree.command(name="search_preview", description="Search for music with preview and manual selection")
+    @is_setup()
+    @app_commands.describe(query="Search query for finding music")
+    async def search_preview_command(interaction: discord.Interaction, query: str):
+        """Legacy search command with preview and manual selection"""
+        logger.debug(f"/search_preview invoked by {interaction.user} in guild {interaction.guild_id} with query: {query}")
         await interaction.response.defer()
 
         try:
@@ -75,7 +141,7 @@ def setup_music_commands(client, queue_manager, player_manager, data_manager):
                     pass  # Message might have been deleted
 
         except Exception as e:
-            logger.error(f"Error in search command: {e}")
+            logger.error(f"Error in search preview command: {e}")
             await interaction.followup.send("❌ An error occurred while searching.", ephemeral=True)
 
     @client.tree.command(name="play", description="Play a song or add it to the queue")
@@ -253,8 +319,8 @@ async def _extract_song_data(link, search_mode=False):
             optimized_query = search_optimizer.preprocess_query(link)
             
             if search_mode:
-                # Use fast search for search mode (Phase 1)
-                search_results = await search_optimizer.fast_search(optimized_query, max_results=5)
+                # Use fast search for search mode - optimized for auto-selection (fewer results)
+                search_results = await search_optimizer.fast_search(optimized_query, max_results=3)
                 
                 if search_results:
                     # Cache the results
@@ -263,7 +329,7 @@ async def _extract_song_data(link, search_mode=False):
                 else:
                     # Fallback to regular search if fast search fails
                     logger.debug(f"Fast search failed, using fallback for: {link}")
-                    fallback_results = await search_optimizer.search_with_fallback(optimized_query, max_results=5)
+                    fallback_results = await search_optimizer.search_with_fallback(optimized_query, max_results=3)
                     if fallback_results:
                         search_cache.set(link, fallback_results, search_mode=True, ttl=900)  # 15 minutes for fallback
                         return fallback_results

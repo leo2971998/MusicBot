@@ -20,6 +20,43 @@ class SearchOptimizer:
         self.fast_ytdl = youtube_dl.YoutubeDL(FAST_SEARCH_OPTS)
         self.full_ytdl = youtube_dl.YoutubeDL(FULL_METADATA_OPTS)
     
+    async def get_best_result(self, query: str) -> Optional[Dict[str, Any]]:
+        """
+        Get the single best search result based on view count
+        Optimized for auto-selection scenarios
+        """
+        try:
+            start_time = time.time()
+            
+            # Use ytsearch1 for single result to maximize performance
+            search_query = f"ytsearch1:{query}"
+            
+            loop = asyncio.get_running_loop()
+            search_results = await loop.run_in_executor(
+                None, lambda: self.fast_ytdl.extract_info(search_query, download=False)
+            )
+            
+            elapsed = time.time() - start_time
+            logger.debug(f"Best result search completed in {elapsed:.2f}s for query: {query}")
+            
+            if not search_results or not search_results.get('entries'):
+                logger.debug(f"No search results found for query: {query}")
+                return None
+            
+            # Process the single result
+            entry = search_results['entries'][0]
+            if entry:
+                processed_entry = self._process_fast_result(entry)
+                if processed_entry:
+                    logger.debug(f"Found best result: {processed_entry.get('title')} with {processed_entry.get('view_count', 0):,} views")
+                    return processed_entry
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error in best result search for query '{query}': {e}")
+            return None
+    
     async def fast_search(self, query: str, max_results: int = 5) -> Optional[List[Dict[str, Any]]]:
         """
         Phase 1: Fast search with minimal metadata extraction
