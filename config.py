@@ -45,3 +45,8 @@ LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 # How long to stay connected when idle (in seconds)
 IDLE_DISCONNECT_DELAY = int(os.getenv("IDLE_DISCONNECT_DELAY", "120"))
+
+# Health check and cleanup intervals (in seconds)
+HEALTH_CHECK_INTERVAL = int(os.getenv("HEALTH_CHECK_INTERVAL", "300"))  # 5 minutes
+MEMORY_CLEANUP_INTERVAL = int(os.getenv("MEMORY_CLEANUP_INTERVAL", "600"))  # 10 minutes
+MAX_GUILD_DATA_AGE = int(os.getenv("MAX_GUILD_DATA_AGE", "86400"))  # 24 hours

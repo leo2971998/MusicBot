@@ -1,4 +1,6 @@
 import logging
+import asyncio
+import traceback
 import discord
 from discord import Embed
 from ui.views import MusicControlView
@@ -29,71 +31,109 @@ async def update_stable_message(guild_id: str):
             return
 
         stable_message = guild_data.get('stable_message')
+        
+        # Enhanced stable message recovery
         if not stable_message:
-            try:
-                # Try to fetch existing message first
-                stable_message_id = guild_data.get('stable_message_id')
-                if stable_message_id:
-                    try:
-                        stable_message = await channel.fetch_message(int(stable_message_id))
-                        guild_data['stable_message'] = stable_message
-                    except discord.NotFound:
-                        logger.info(f"Stable message {stable_message_id} not found, creating new one")
-                        stable_message = None
+            stable_message_id = guild_data.get('stable_message_id')
+            if stable_message_id:
+                try:
+                    stable_message = await channel.fetch_message(int(stable_message_id))
+                    guild_data['stable_message'] = stable_message
+                    logger.debug(f"Recovered stable message {stable_message_id} for guild {guild_id}")
+                except discord.NotFound:
+                    logger.info(f"Stable message {stable_message_id} not found, creating new one")
+                    stable_message = None
+                except discord.Forbidden:
+                    logger.error(f"Permission denied: Cannot access message {stable_message_id} in guild {guild_id}")
+                    return
 
-                if not stable_message:
+            if not stable_message:
+                try:
                     stable_message = await channel.send('🎶 **Music Bot UI Initialized** 🎶')
                     guild_data['stable_message'] = stable_message
                     guild_data['stable_message_id'] = stable_message.id
+                    logger.info(f"Created new stable message {stable_message.id} for guild {guild_id}")
                     await data_manager.save_guilds_data(client)
-            except discord.Forbidden:
-                logger.error(f"Permission denied: Cannot create/access messages in channel {channel_id}")
-                return
-            except Exception as e:
-                logger.error(f"Failed to recreate stable message: {e}")
-                return
+                except discord.Forbidden:
+                    logger.error(f"Permission denied: Cannot create messages in channel {channel_id}")
+                    return
+                except Exception as e:
+                    logger.error(f"Failed to create stable message: {e}")
+                    return
 
-        # Create embeds
+        # Create embeds with enhanced error handling
         try:
-            embeds = [
-                create_credits_embed(),
-                create_now_playing_embed(guild_id, guild_data),
-                create_queue_embed(guild_id)
-            ]
-
-            view = MusicControlView()
-
-            # Try to edit the message
-            await stable_message.edit(embeds=embeds, view=view)
-
-        except discord.NotFound:
-            # Message was deleted, create a new one
-            logger.info(f"Stable message was deleted, creating new one for guild {guild_id}")
+            embeds = []
+            
+            # Add each embed with individual error handling
             try:
-                stable_message = await channel.send('🎶 **Music Bot UI Initialized** 🎶')
-                guild_data['stable_message'] = stable_message
-                guild_data['stable_message_id'] = stable_message.id
+                embeds.append(create_credits_embed())
+            except Exception as e:
+                logger.warning(f"Failed to create credits embed: {e}")
+                
+            try:
+                embeds.append(create_now_playing_embed(guild_id, guild_data))
+            except Exception as e:
+                logger.warning(f"Failed to create now playing embed: {e}")
+                # Add fallback embed
+                embeds.append(discord.Embed(title='🎶 Now Playing', description='Error loading current song', color=0xff0000))
+                
+            try:
+                embeds.append(create_queue_embed(guild_id))
+            except Exception as e:
+                logger.warning(f"Failed to create queue embed: {e}")
+                # Add fallback embed  
+                embeds.append(discord.Embed(title='📜 Current Queue', description='Error loading queue', color=0xff0000))
 
-                embeds = [
-                    create_credits_embed(),
-                    create_now_playing_embed(guild_id, guild_data),
-                    create_queue_embed(guild_id)
-                ]
-                view = MusicControlView()
-                await stable_message.edit(embeds=embeds, view=view)
+            # Ensure we have at least basic embeds
+            if not embeds:
+                embeds = [discord.Embed(title='🎶 Music Bot', description='UI temporarily unavailable', color=0xff0000)]
 
-            except Exception as recreate_error:
-                logger.error(f"Failed to recreate stable message: {recreate_error}")
-                return
+            # Create fresh view for better button responsiveness
+            view = MusicControlView()
+            
+            # Update message with retry logic
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    await stable_message.edit(embeds=embeds, view=view)
+                    logger.debug(f"Successfully updated stable message for guild {guild_id} (attempt {attempt + 1})")
+                    break
+                except discord.NotFound:
+                    # Message was deleted, create a new one
+                    logger.info(f"Stable message was deleted, creating new one for guild {guild_id}")
+                    try:
+                        stable_message = await channel.send('🎶 **Music Bot UI Initialized** 🎶')
+                        guild_data['stable_message'] = stable_message
+                        guild_data['stable_message_id'] = stable_message.id
+                        await stable_message.edit(embeds=embeds, view=view)
+                        logger.info(f"Created and updated new stable message {stable_message.id} for guild {guild_id}")
+                        break
+                    except Exception as recreate_error:
+                        logger.error(f"Failed to recreate stable message: {recreate_error}")
+                        return
+                except discord.Forbidden:
+                    logger.error(f"Permission denied: Cannot edit message in guild {guild_id}")
+                    return
+                except discord.HTTPException as e:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"HTTP error updating stable message in guild {guild_id} (attempt {attempt + 1}): {e}, retrying...")
+                        await asyncio.sleep(1)  # Brief delay before retry
+                        continue
+                    else:
+                        logger.error(f"HTTP error updating stable message in guild {guild_id} after {max_retries} attempts: {e}")
+                        return
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Unexpected error updating stable message in guild {guild_id} (attempt {attempt + 1}): {e}, retrying...")
+                        await asyncio.sleep(1)
+                        continue
+                    else:
+                        logger.error(f"Unexpected error updating stable message in guild {guild_id} after {max_retries} attempts: {e}")
+                        return
 
-        except discord.Forbidden:
-            logger.error(f"Permission denied: Cannot edit message in guild {guild_id}")
-            return
-        except discord.HTTPException as e:
-            logger.error(f"HTTP error updating stable message in guild {guild_id}: {e}")
-            return
         except Exception as e:
-            logger.error(f"Unexpected error updating stable message in guild {guild_id}: {e}")
+            logger.error(f"Critical error creating embeds/view for guild {guild_id}: {e}")
             return
 
         # Save guild data
@@ -104,6 +144,7 @@ async def update_stable_message(guild_id: str):
 
     except Exception as e:
         logger.error(f"Critical error in update_stable_message for guild {guild_id}: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
 
 def create_credits_embed() -> Embed:
     """Create the credits embed"""
