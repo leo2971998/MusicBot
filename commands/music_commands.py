@@ -15,6 +15,66 @@ ytdl = youtube_dl.YoutubeDL(YTDL_FORMAT_OPTS)
 def setup_music_commands(client, queue_manager, player_manager, data_manager):
     """Setup music-related commands"""
 
+    @client.tree.command(name="search", description="Search for music and preview results before playing")
+    @is_setup()
+    @app_commands.describe(query="Search query for finding music")
+    async def search_command(interaction: discord.Interaction, query: str):
+        """Search command with preview"""
+        logger.debug(f"/search invoked by {interaction.user} in guild {interaction.guild_id} with query: {query}")
+        await interaction.response.defer()
+
+        try:
+            # Get search results
+            search_results = await _extract_song_data(query, search_mode=True)
+            
+            if not search_results or len(search_results) == 0:
+                await interaction.followup.send("❌ No search results found.", ephemeral=True)
+                return
+
+            # Create search results view and embed
+            from ui.search_view import SearchResultsView, create_search_results_embed
+            
+            view = SearchResultsView(search_results)
+            embed = create_search_results_embed(search_results, query)
+            
+            # Send search results
+            message = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+            
+            # Wait for selection or timeout
+            await view.wait()
+            
+            # Handle timeout case
+            if not view.selection_made and view.selected_index is None:
+                # Auto-select first result
+                view.selected_index = 0
+                first_result = search_results[0]
+                
+                # Process the first result
+                response_message = await process_play_request(
+                    interaction.user,
+                    interaction.guild,
+                    interaction.channel,
+                    first_result.get('webpage_url', first_result.get('url')),
+                    client,
+                    queue_manager,
+                    player_manager,
+                    data_manager
+                )
+                
+                # Update message to show auto-selection
+                try:
+                    await interaction.edit_original_response(
+                        content=f"⏰ Timeout! Auto-selected: **{first_result.get('title', 'Unknown')}**\n{response_message}",
+                        embed=None,
+                        view=None
+                    )
+                except discord.NotFound:
+                    pass  # Message might have been deleted
+
+        except Exception as e:
+            logger.error(f"Error in search command: {e}")
+            await interaction.followup.send("❌ An error occurred while searching.", ephemeral=True)
+
     @client.tree.command(name="play", description="Play a song or add it to the queue")
     @is_setup()
     @app_commands.describe(link="The URL or name of the song to play")
@@ -173,14 +233,16 @@ async def process_play_request(user, guild, channel, link, client, queue_manager
         logger.error(f"Error processing play request: {e}")
         return "❌ An error occurred while processing your request."
 
-async def _extract_song_data(link):
+async def _extract_song_data(link, search_mode=False):
     """Extract song data using yt-dlp"""
     try:
         loop = asyncio.get_running_loop()
 
         # Determine if it's a search or direct link
-        if 'list=' not in link and 'watch?v=' not in link and 'youtu.be/' not in link:
-            search_query = f"ytsearch:{link}"
+        is_search = 'list=' not in link and 'watch?v=' not in link and 'youtu.be/' not in link
+        
+        if is_search:
+            search_query = f"ytsearch5:{link}" if search_mode else f"ytsearch:{link}"
             search_results = await loop.run_in_executor(
                 None, lambda: ytdl.extract_info(search_query, download=False)
             )
@@ -188,9 +250,13 @@ async def _extract_song_data(link):
             if not search_results.get('entries'):
                 return None
 
-            # Get the best result by view count
-            best_result = max(search_results['entries'], key=lambda x: x.get('view_count', 0))
-            return best_result
+            if search_mode:
+                # Return multiple results for search mode
+                return search_results['entries']
+            else:
+                # Get the best result by view count for direct play
+                best_result = max(search_results['entries'], key=lambda x: x.get('view_count', 0))
+                return best_result
         else:
             # Direct link
             return await loop.run_in_executor(
@@ -286,6 +352,12 @@ async def _play_song(guild_id, song_info, client, player_manager, queue_manager,
         if not voice_client:
             logger.error(f"No voice client for guild {guild_id}")
             return
+
+        # Reset votes for new song
+        from utils.vote_manager import VoteManager
+        guild_data = client.guilds_data.get(guild_id, {})
+        song_id = song_info.get('id', song_info.get('webpage_url', 'unknown'))
+        VoteManager.reset_votes(guild_data, song_id)
 
         # Create audio source
         url = song_info.get('url')

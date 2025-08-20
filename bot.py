@@ -39,6 +39,32 @@ async def on_ready():
 
 
 @client.event
+async def on_voice_state_update(member, before, after):
+    """Handle voice state changes for vote management"""
+    try:
+        # Only process if it's a user leaving a voice channel where the bot is present
+        if before.channel and not after.channel:  # User left a voice channel
+            guild_id = str(member.guild.id)
+            guild_data = client.guilds_data.get(guild_id)
+            
+            # Check if bot is in the channel the user left and if there are active votes
+            voice_client = player_manager.voice_clients.get(guild_id)
+            if (voice_client and voice_client.channel == before.channel and 
+                guild_data and 'vote_skip' in guild_data):
+                
+                # Remove the user's vote if they had one
+                from utils.vote_manager import VoteManager
+                if VoteManager.remove_user_vote(guild_data, member.id):
+                    logger.info(f"Removed vote from user {member.id} who left voice channel in guild {guild_id}")
+                    
+                    # Update the UI to reflect the vote change
+                    from ui.embeds import update_stable_message
+                    await update_stable_message(guild_id)
+                    
+    except Exception as e:
+        logger.error(f"Error handling voice state update: {e}")
+
+@client.event
 async def on_disconnect():
     """Handle bot disconnect gracefully"""
     logger.warning('Bot disconnected, stopping health monitor')
