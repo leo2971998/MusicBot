@@ -117,6 +117,20 @@ class SearchResultSelect(Select):
                 ephemeral=True
             )
             
+            # Auto-clear old messages after successful selection
+            guild_id = str(interaction.guild.id)
+            from bot_state import client
+            guild_data = client.guilds_data.get(guild_id)
+            if guild_data:
+                from utils.message_utils import clear_channel_messages
+                stable_message_id = guild_data.get('stable_message_id')
+                if stable_message_id:
+                    try:
+                        await clear_channel_messages(interaction.channel, stable_message_id)
+                        logger.debug(f"Auto-cleared messages in guild {guild_id} after search selection")
+                    except Exception as e:
+                        logger.warning(f"Failed to auto-clear messages in guild {guild_id}: {e}")
+            
             # Disable the view
             for item in self.view.children:
                 item.disabled = True
