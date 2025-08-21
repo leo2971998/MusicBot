@@ -147,7 +147,7 @@ class MusicControlView(View):
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise
 
-    @discord.ui.button(label='🗳️ Vote Skip', style=ButtonStyle.primary)
+    @discord.ui.button(label='⏭️ Skip', style=ButtonStyle.primary)
     async def skip_button(self, interaction: discord.Interaction, button: Button):
         try:
             from bot_state import player_manager, client
@@ -156,7 +156,7 @@ class MusicControlView(View):
 
             guild_id = str(interaction.guild.id)
             user_id = interaction.user.id
-            logger.debug(f"Vote skip button clicked in guild {interaction.guild_id} by user {interaction.user}")
+            logger.debug(f"Skip button clicked in guild {interaction.guild_id} by user {interaction.user}")
             
             voice_client = player_manager.voice_clients.get(guild_id)
             if not voice_client or not (voice_client.is_playing() or voice_client.is_paused()):
@@ -165,37 +165,46 @@ class MusicControlView(View):
 
             # Check if user is in voice channel
             if not interaction.user.voice or not interaction.user.voice.channel:
-                await self._safe_interaction_response(interaction, '❌ You must be in the voice channel to vote skip.')
+                await self._safe_interaction_response(interaction, '❌ You must be in the voice channel to skip.')
                 return
 
             # Check if user is in the same voice channel as bot
             if interaction.user.voice.channel != voice_client.channel:
-                await self._safe_interaction_response(interaction, f'❌ You must be in {voice_client.channel.mention} to vote skip.')
+                await self._safe_interaction_response(interaction, f'❌ You must be in {voice_client.channel.mention} to skip.')
                 return
 
             guild_data = client.guilds_data.get(guild_id, {})
             
-            # Try to add vote
-            if not VoteManager.add_vote(guild_data, user_id):
-                await self._safe_interaction_response(interaction, '❌ You have already voted to skip this song.')
-                return
-
-            # Check if threshold is reached
-            if VoteManager.check_vote_threshold(guild_data, voice_client.channel):
-                # Skip the song
+            # Check if user is the song requestor
+            if VoteManager.is_song_requestor(guild_data, user_id):
+                # Skip immediately for requestor
                 voice_client.stop()
                 VoteManager.reset_votes(guild_data)  # Reset votes for next song
-                await self._safe_interaction_response(interaction, '⏭️ Vote threshold reached! Skipping song.')
-                logger.info(f"Song skipped by vote in guild {guild_id}")
+                await self._safe_interaction_response(interaction, '⏭️ Song skipped by requestor.')
+                logger.info(f"Song skipped by requestor (user {user_id}) in guild {guild_id}")
             else:
-                # Show vote progress
-                vote_status = VoteManager.get_vote_status(guild_data, voice_client.channel)
-                progress_bar = "▓" * vote_status['current_votes'] + "░" * (vote_status['required_votes'] - vote_status['current_votes'])
-                await self._safe_interaction_response(
-                    interaction, 
-                    f'🗳️ Vote added! **{vote_status["current_votes"]}/{vote_status["required_votes"]}** votes needed to skip.\n'
-                    f'`{progress_bar}` {vote_status["percentage"]}%'
-                )
+                # Use vote system for non-requestors
+                # Try to add vote
+                if not VoteManager.add_vote(guild_data, user_id):
+                    await self._safe_interaction_response(interaction, '❌ You have already voted to skip this song.')
+                    return
+
+                # Check if threshold is reached
+                if VoteManager.check_vote_threshold(guild_data, voice_client.channel):
+                    # Skip the song
+                    voice_client.stop()
+                    VoteManager.reset_votes(guild_data)  # Reset votes for next song
+                    await self._safe_interaction_response(interaction, '⏭️ Vote threshold reached! Skipping song.')
+                    logger.info(f"Song skipped by vote in guild {guild_id}")
+                else:
+                    # Show vote progress
+                    vote_status = VoteManager.get_vote_status(guild_data, voice_client.channel)
+                    progress_bar = "▓" * vote_status['current_votes'] + "░" * (vote_status['required_votes'] - vote_status['current_votes'])
+                    await self._safe_interaction_response(
+                        interaction, 
+                        f'🗳️ Vote added! **{vote_status["current_votes"]}/{vote_status["required_votes"]}** votes needed to skip.\n'
+                        f'`{progress_bar}` {vote_status["percentage"]}%'
+                    )
 
             await update_stable_message(guild_id)
             await self._delete_interaction_message_safe(interaction)

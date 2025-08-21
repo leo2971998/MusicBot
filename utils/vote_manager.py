@@ -123,3 +123,39 @@ class VoteManager:
             logger.debug(f"Removed vote from user {user_id}")
             return True
         return False
+    
+    @staticmethod
+    def is_song_requestor(guild_data: dict, user_id: int) -> bool:
+        """
+        Check if the user is the requestor of the current song.
+        Returns True if user requested the current song, False otherwise.
+        """
+        current_song = guild_data.get('current_song')
+        if not current_song:
+            return False
+            
+        # Check for requester_id field first (more reliable)
+        requester_id = current_song.get('requester_id')
+        if requester_id is not None:
+            return requester_id == user_id
+            
+        # Fallback: Extract user ID from requester mention (format: <@user_id>)
+        requester = current_song.get('requester', '')
+        if not requester:
+            return False
+            
+        # Handle mention format <@user_id>
+        if requester.startswith('<@') and requester.endswith('>'):
+            try:
+                # Remove <@ and > from the mention
+                requester_id = int(requester[2:-1])
+                return requester_id == user_id
+            except ValueError:
+                logger.warning(f"Could not parse requester mention: {requester}")
+                return False
+        else:
+            # Fallback: try direct comparison if stored as string
+            try:
+                return int(requester) == user_id
+            except (ValueError, TypeError):
+                return False

@@ -383,6 +383,7 @@ async def _process_single_song(song_data, user, guild_id, client, queue_manager,
     try:
         song_info = song_data.copy()
         song_info['requester'] = user.mention
+        song_info['requester_id'] = user.id  # Store user ID for easier comparison
 
         if extra_meta:
             song_info.update(extra_meta)
@@ -429,6 +430,7 @@ async def _process_playlist(song_data, user, guild_id, client, queue_manager,
 
             song_info = entry.copy()
             song_info['requester'] = user.mention
+            song_info['requester_id'] = user.id  # Store user ID for easier comparison
 
             if extra_meta:
                 song_info.update(extra_meta)
