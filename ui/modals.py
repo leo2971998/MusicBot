@@ -196,6 +196,20 @@ class AddSongModal(Modal):
 
                 if response_message:
                     await interaction.followup.send(response_message, ephemeral=True)
+                    
+                    # Auto-clear old messages after successful URL processing
+                    guild_id = str(interaction.guild.id)
+                    from bot_state import client
+                    guild_data = client.guilds_data.get(guild_id)
+                    if guild_data:
+                        from utils.message_utils import clear_channel_messages
+                        stable_message_id = guild_data.get('stable_message_id')
+                        if stable_message_id:
+                            try:
+                                await clear_channel_messages(interaction.channel, stable_message_id)
+                                logger.debug(f"Auto-cleared messages in guild {guild_id} after URL processing")
+                            except Exception as e:
+                                logger.warning(f"Failed to auto-clear messages in guild {guild_id}: {e}")
             else:
                 # Handle as search query
                 if self.preview_mode:
@@ -244,6 +258,20 @@ class AddSongModal(Modal):
                         f"🎵 {action_text} - Auto-selected: **{best_result.get('title', 'Unknown')}**\n{response_message}",
                         ephemeral=True
                     )
+                    
+                    # Auto-clear old messages after successful normal mode processing
+                    guild_id = str(interaction.guild.id)
+                    from bot_state import client
+                    guild_data = client.guilds_data.get(guild_id)
+                    if guild_data:
+                        from utils.message_utils import clear_channel_messages
+                        stable_message_id = guild_data.get('stable_message_id')
+                        if stable_message_id:
+                            try:
+                                await clear_channel_messages(interaction.channel, stable_message_id)
+                                logger.debug(f"Auto-cleared messages in guild {guild_id} after normal mode processing")
+                            except Exception as e:
+                                logger.warning(f"Failed to auto-clear messages in guild {guild_id}: {e}")
 
         except Exception as e:
             logger.error(f"Error in AddSongModal: {e}")
