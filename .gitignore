@@ -34,3 +34,11 @@ Thumbs.db
 
 # Discord
 youtube_cookies.txt
+
+# Development artifacts
+test_*.py
+demo_*.py
+ui_demo*.py
+*_demo.py
+*_test.py
+ui_preview.html
