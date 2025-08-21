@@ -200,6 +200,16 @@ async def on_message(message):
                 data_manager
             )
 
+            # Auto-clear old messages after processing play request
+            from utils.message_utils import clear_channel_messages
+            stable_message_id = guild_data.get('stable_message_id')
+            if stable_message_id:
+                try:
+                    await clear_channel_messages(message.channel, stable_message_id)
+                    logger.debug(f"Auto-cleared messages in guild {guild_id} after processing play request")
+                except Exception as e:
+                    logger.warning(f"Failed to auto-clear messages in guild {guild_id}: {e}")
+
             if response_message:
                 sent_msg = await message.channel.send(response_message)
                 # Delete response after 5 seconds

@@ -310,19 +310,6 @@ class MusicControlView(View):
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise
 
-    @discord.ui.button(label='🔍 Add Song (Preview)', style=ButtonStyle.success)
-    async def add_song_preview_button(self, interaction: discord.Interaction, button: Button):
-        try:
-            from ui.modals import AddSongModal
-            logger.debug(f"Add song preview button clicked in guild {interaction.guild_id} by user {interaction.user}")
-            modal = AddSongModal(preview_mode=True)
-            await interaction.response.send_modal(modal)
-            logger.debug(f"Successfully sent modal for add song preview in guild {interaction.guild_id}")
-        except Exception as e:
-            logger.error(f"Error in add_song_preview_button: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            raise
-
     @discord.ui.button(label='🎵 Add Song (Normal)', style=ButtonStyle.success)
     async def add_song_normal_button(self, interaction: discord.Interaction, button: Button):
         try:
@@ -333,6 +320,19 @@ class MusicControlView(View):
             logger.debug(f"Successfully sent modal for add song normal in guild {interaction.guild_id}")
         except Exception as e:
             logger.error(f"Error in add_song_normal_button: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise
+
+    @discord.ui.button(label='🔍 Add Song (Preview)', style=ButtonStyle.success)
+    async def add_song_preview_button(self, interaction: discord.Interaction, button: Button):
+        try:
+            from ui.modals import AddSongModal
+            logger.debug(f"Add song preview button clicked in guild {interaction.guild_id} by user {interaction.user}")
+            modal = AddSongModal(preview_mode=True)
+            await interaction.response.send_modal(modal)
+            logger.debug(f"Successfully sent modal for add song preview in guild {interaction.guild_id}")
+        except Exception as e:
+            logger.error(f"Error in add_song_preview_button: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise
 
@@ -359,53 +359,6 @@ class MusicControlView(View):
             logger.debug(f"Successfully sent modal for remove song in guild {interaction.guild_id}")
         except Exception as e:
             logger.error(f"Error in remove_button: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            raise
-
-    @discord.ui.button(label='🧹 Clear Messages', style=ButtonStyle.secondary)
-    async def clear_messages_button(self, interaction: discord.Interaction, button: Button):
-        try:
-            from bot_state import client
-            from utils.message_utils import clear_channel_messages
-
-            guild_id = str(interaction.guild.id)
-            logger.debug(f"Clear messages button clicked in guild {interaction.guild_id} by user {interaction.user}")
-            
-            guild_data = client.guilds_data.get(guild_id)
-            if not guild_data:
-                await self._safe_interaction_response(interaction, '❌ Guild data not found. Try running `/setup` first.')
-                return
-
-            channel_id = guild_data.get('channel_id')
-            stable_message_id = guild_data.get('stable_message_id')
-            
-            if not channel_id or not stable_message_id:
-                await self._safe_interaction_response(interaction, '❌ Music channel not properly configured.')
-                return
-
-            channel = interaction.channel
-            if not channel or channel.id != int(channel_id):
-                await self._safe_interaction_response(interaction, '❌ This button only works in the configured music channel.')
-                return
-
-            # Check permissions
-            if not channel.permissions_for(interaction.guild.me).manage_messages:
-                await self._safe_interaction_response(interaction, '❌ I need "Manage Messages" permission to clear messages.')
-                return
-
-            # Clear messages except stable message and pinned messages
-            logger.debug(f"Starting message clearing in guild {guild_id}, preserving stable message {stable_message_id}")
-            await clear_channel_messages(channel, stable_message_id)
-            
-            # Send confirmation message
-            await self._safe_interaction_response(interaction, '🧹 Messages cleared! Music UI remains visible.')
-            logger.info(f"Successfully cleared messages in guild {guild_id} channel {channel_id}")
-            
-            # Delete the confirmation message after 3 seconds
-            await self._delete_interaction_message_safe(interaction, delay=3.0)
-            
-        except Exception as e:
-            logger.error(f"Error in clear_messages_button: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise
 

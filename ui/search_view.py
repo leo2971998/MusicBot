@@ -9,6 +9,7 @@ import discord
 from discord import ButtonStyle
 from discord.ui import View, Button, Select
 from typing import List, Dict, Optional, Callable
+from utils.format_utils import format_time
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ class SearchResultsView(View):
                 title = title[:87] + "..."
             
             duration = result.get('duration', 0)
-            duration_str = f"{duration//60}:{duration%60:02d}" if duration else "Unknown"
+            duration_str = format_time(duration) if duration else "Unknown"
             
             options.append(discord.SelectOption(
                 label=title,
@@ -150,7 +151,7 @@ def create_search_results_embed(search_results: List[Dict], query: str) -> disco
         
         # Format duration
         if duration:
-            duration_str = f"{duration//60}:{duration%60:02d}"
+            duration_str = format_time(duration)
         else:
             duration_str = "Unknown"
         

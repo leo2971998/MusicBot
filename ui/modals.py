@@ -3,6 +3,7 @@ import logging
 import discord
 from discord.ui import Modal, TextInput
 from typing import List, Dict
+from utils.format_utils import format_time
 import re
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ class ModalSearchResultsView(discord.ui.View):
                 title = title[:87] + "..."
             
             duration = result.get('duration', 0)
-            duration_str = f"{duration//60}:{duration%60:02d}" if duration else "Unknown"
+            duration_str = format_time(duration) if duration else "Unknown"
             
             options.append(discord.SelectOption(
                 label=title,
