@@ -158,7 +158,8 @@ class SearchOptimizer:
     def preprocess_query(self, query: str) -> str:
         """Optimize search query for better results"""
         # Normalize Unicode characters to handle Vietnamese diacritical marks properly
-        normalized_query = unicodedata.normalize('NFKD', query)
+        # Use NFC to maintain Vietnamese characters while normalizing encoding
+        normalized_query = unicodedata.normalize('NFC', query)
         
         # Remove common filler words that don't help search (English and Vietnamese)
         filler_words = {
