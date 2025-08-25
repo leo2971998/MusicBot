@@ -6,6 +6,7 @@ Handles two-phase search approach and query optimization.
 import asyncio
 import logging
 import time
+import unicodedata
 from typing import List, Dict, Optional, Any
 import yt_dlp as youtube_dl
 from config import FAST_SEARCH_OPTS, FULL_METADATA_OPTS
@@ -156,17 +157,25 @@ class SearchOptimizer:
     
     def preprocess_query(self, query: str) -> str:
         """Optimize search query for better results"""
-        # Remove common filler words that don't help search
-        filler_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from'}
+        # Normalize Unicode characters to handle Vietnamese diacritical marks properly
+        normalized_query = unicodedata.normalize('NFKD', query)
+        
+        # Remove common filler words that don't help search (English and Vietnamese)
+        filler_words = {
+            # English filler words
+            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from',
+            # Vietnamese filler words
+            'và', 'của', 'cho', 'từ', 'với', 'tại', 'trong', 'ngoài'
+        }
         
         # Split query into words
-        words = query.lower().split()
+        words = normalized_query.lower().split()
         
         # Keep important words, remove fillers (but keep if query becomes too short)
         filtered_words = [word for word in words if word not in filler_words or len(words) <= 3]
         
         # Rejoin words
-        optimized_query = ' '.join(filtered_words) if filtered_words else query
+        optimized_query = ' '.join(filtered_words) if filtered_words else normalized_query
         
         # Limit query length to avoid overly long searches
         if len(optimized_query) > 100:
