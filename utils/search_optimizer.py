@@ -23,7 +23,7 @@ class SearchOptimizer:
     
     async def get_best_result(self, query: str) -> Optional[Dict[str, Any]]:
         """
-        Get the single best search result based on view count
+        Get the top search result using provider relevance
         Optimized for auto-selection scenarios
         """
         try:
