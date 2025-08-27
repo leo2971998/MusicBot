@@ -18,11 +18,11 @@ full_metadata_ytdl = youtube_dl.YoutubeDL(FULL_METADATA_OPTS)
 def setup_music_commands(client, queue_manager, player_manager, data_manager):
     """Setup music-related commands"""
 
-    @client.tree.command(name="search", description="Search for music and auto-play the most viewed result")
+    @client.tree.command(name="search", description="Search for music and auto-play the top result")
     @is_setup()
     @app_commands.describe(query="Search query for finding music")
     async def search_command(interaction: discord.Interaction, query: str):
-        """Search command with auto-selection of most viewed result"""
+        """Search command with auto-selection of the top result"""
         logger.debug(f"/search invoked by {interaction.user} in guild {interaction.guild_id} with query: {query}")
         await interaction.response.defer()
 
@@ -30,35 +30,19 @@ def setup_music_commands(client, queue_manager, player_manager, data_manager):
             # Show searching message
             await interaction.followup.send(f"🔍 Searching for: **{query}**...", ephemeral=True)
             
-            # Get the best result directly using optimized search
-            from utils.search_optimizer import search_optimizer
-            
-            # Check cache first
-            from utils.search_cache import search_cache
-            optimized_query = search_optimizer.preprocess_query(query)
-            cached_result = search_cache.get(query, search_mode=False)  # Check for single result cache
-            
-            if cached_result:
-                logger.debug(f"Using cached result for query: {query}")
-                best_result = cached_result
-            else:
-                # Get fresh result
-                best_result = await search_optimizer.get_best_result(optimized_query)
-                
-                if not best_result:
-                    # Fallback to multi-result search and pick the best
-                    search_results = await _extract_song_data(query, search_mode=True)
-                    if search_results and len(search_results) > 0:
-                        best_result = max(search_results, key=lambda x: x.get('view_count', 0))
-                    else:
-                        await interaction.edit_original_response(content="❌ No search results found.")
-                        return
-                
-                # Cache the single result
-                if best_result:
-                    search_cache.set(query, best_result, search_mode=False, ttl=3600)  # 1 hour
-            
-            logger.debug(f"Auto-selected best result: {best_result.get('title')} with {best_result.get('view_count', 0):,} views")
+            # Use the shared extraction helper to get search results
+            search_results = await _extract_song_data(query, search_mode=True)
+
+            if not search_results or len(search_results) == 0:
+                await interaction.edit_original_response(content="❌ No search results found.")
+                return
+
+            # Auto-select the first (most relevant) result
+            best_result = search_results[0]
+
+            logger.debug(
+                f"Auto-selected top result: {best_result.get('title')} with {best_result.get('view_count', 0):,} views"
+            )
             
             # Process the best result immediately
             response_message = await process_play_request(
@@ -334,34 +318,35 @@ async def _extract_song_data(link, search_mode=False):
                         search_cache.set(link, fallback_results, search_mode=True, ttl=900)  # 15 minutes for fallback
                         return fallback_results
             else:
-                # For direct play, use fast search and get the best result
+                # For direct play, use the same search algorithm as preview and auto-select the top result
                 search_results = await search_optimizer.fast_search(optimized_query, max_results=3)
-                
+
                 if search_results and len(search_results) > 0:
-                    # Get best result by view count, but ensure we have full metadata for playback
-                    best_result = max(search_results, key=lambda x: x.get('view_count', 0))
-                    
+                    # Take the first result returned by the provider
+                    best_result = search_results[0]
+
                     # If it's a fast result, get full metadata for playback
                     if best_result.get('_fast_result', False):
                         full_metadata = await search_optimizer.get_full_metadata(best_result['webpage_url'])
                         if full_metadata:
                             best_result = full_metadata
-                    
+
                     # Cache the result
                     search_cache.set(link, best_result, search_mode=False, ttl=3600)  # 1 hour
                     return best_result
                 else:
-                    # Fallback to regular search
+                    # Fallback to a regular search and pick the first result
                     logger.debug(f"Fast search failed for direct play, using fallback for: {link}")
-                    loop = asyncio.get_running_loop()
-                    search_query = f"ytsearch:{optimized_query}"
-                    search_results = await loop.run_in_executor(
-                        None, lambda: full_metadata_ytdl.extract_info(search_query, download=False)
-                    )
-                    
-                    if search_results and search_results.get('entries'):
-                        best_result = max(search_results['entries'], key=lambda x: x.get('view_count', 0))
-                        search_cache.set(link, best_result, search_mode=False, ttl=1800)  # 30 minutes
+                    fallback_results = await search_optimizer.search_with_fallback(optimized_query, max_results=3)
+                    if fallback_results and len(fallback_results) > 0:
+                        best_result = fallback_results[0]
+
+                        if best_result.get('_fast_result', False):
+                            full_metadata = await search_optimizer.get_full_metadata(best_result['webpage_url'])
+                            if full_metadata:
+                                best_result = full_metadata
+
+                        search_cache.set(link, best_result, search_mode=False, ttl=1800)  # 30 minutes for fallback
                         return best_result
         else:
             # Direct link - use full metadata extraction

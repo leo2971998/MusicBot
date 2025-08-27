@@ -23,7 +23,7 @@ class SearchOptimizer:
     
     async def get_best_result(self, query: str) -> Optional[Dict[str, Any]]:
         """
-        Get the single best search result based on view count
+        Get the top search result using provider relevance
         Optimized for auto-selection scenarios
         """
         try:
@@ -172,8 +172,9 @@ class SearchOptimizer:
         # Split query into words
         words = normalized_query.lower().split()
         
-        # Keep important words, remove fillers (but keep if query becomes too short)
-        filtered_words = [word for word in words if word not in filler_words or len(words) <= 3]
+        # Keep important words, remove fillers only for longer queries
+        # Many song titles are short (\u2264 5 words) and may include these words
+        filtered_words = [word for word in words if word not in filler_words or len(words) <= 5]
         
         # Rejoin words
         optimized_query = ' '.join(filtered_words) if filtered_words else normalized_query
