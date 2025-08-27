@@ -30,35 +30,16 @@ def setup_music_commands(client, queue_manager, player_manager, data_manager):
             # Show searching message
             await interaction.followup.send(f"🔍 Searching for: **{query}**...", ephemeral=True)
             
-            # Get the best result directly using optimized search
-            from utils.search_optimizer import search_optimizer
-            
-            # Check cache first
-            from utils.search_cache import search_cache
-            optimized_query = search_optimizer.preprocess_query(query)
-            cached_result = search_cache.get(query, search_mode=False)  # Check for single result cache
-            
-            if cached_result:
-                logger.debug(f"Using cached result for query: {query}")
-                best_result = cached_result
-            else:
-                # Get fresh result
-                best_result = await search_optimizer.get_best_result(optimized_query)
-                
-                if not best_result:
-                    # Fallback to multi-result search and pick the best
-                    search_results = await _extract_song_data(query, search_mode=True)
-                    if search_results and len(search_results) > 0:
-                        best_result = max(search_results, key=lambda x: x.get('view_count', 0))
-                    else:
-                        await interaction.edit_original_response(content="❌ No search results found.")
-                        return
-                
-                # Cache the single result
-                if best_result:
-                    search_cache.set(query, best_result, search_mode=False, ttl=3600)  # 1 hour
-            
-            logger.debug(f"Auto-selected best result: {best_result.get('title')} with {best_result.get('view_count', 0):,} views")
+            # Use the shared extraction helper to find the best match
+            best_result = await _extract_song_data(query, search_mode=False)
+
+            if not best_result:
+                await interaction.edit_original_response(content="❌ No search results found.")
+                return
+
+            logger.debug(
+                f"Auto-selected best result: {best_result.get('title')} with {best_result.get('view_count', 0):,} views"
+            )
             
             # Process the best result immediately
             response_message = await process_play_request(
