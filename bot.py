@@ -27,15 +27,15 @@ async def on_ready():
         synced = await client.tree.sync()
         logger.info(f'Synced {len(synced)} slash commands')
         logger.debug(f'Synced commands: {[cmd.name for cmd in synced]}')
-    except Exception as e:
-        logger.error(f'Failed to sync commands: {e}')
+    except Exception:
+        logger.exception('Failed to sync commands')
     
     # Start health monitoring system
     try:
         await health_monitor.start()
         logger.info('Health monitoring system started')
-    except Exception as e:
-        logger.error(f'Failed to start health monitoring: {e}')
+    except Exception:
+        logger.exception('Failed to start health monitoring')
 
 
 @client.event
@@ -61,8 +61,8 @@ async def on_voice_state_update(member, before, after):
                     from ui.embeds import update_stable_message
                     await update_stable_message(guild_id)
                     
-    except Exception as e:
-        logger.error(f"Error handling voice state update: {e}")
+    except Exception:
+        logger.exception("Error handling voice state update")
 
 @client.event
 async def on_disconnect():
@@ -70,8 +70,8 @@ async def on_disconnect():
     logger.warning('Bot disconnected, stopping health monitor')
     try:
         await health_monitor.stop()
-    except Exception as e:
-        logger.error(f'Error stopping health monitor: {e}')
+    except Exception:
+        logger.exception('Error stopping health monitor')
 
 async def restore_guild_states():
     logger.debug('Restoring guild states')
@@ -101,8 +101,8 @@ async def restore_guild_states():
                 continue
 
             await restore_stable_message(guild_id, guild_data, channel)
-        except Exception as e:
-            logger.error(f"Error processing guild {guild_id}: {e}")
+        except Exception:
+            logger.exception(f"Error processing guild {guild_id}")
             guilds_to_remove.append(guild_id)
 
     for gid in guilds_to_remove:
@@ -159,8 +159,8 @@ async def restore_stable_message(guild_id: str, guild_data: dict, channel: disco
         await data_manager.save_guilds_data(client)
 
         return True
-    except Exception as e:
-        logger.error(f'Failed to restore stable message in guild {guild_id}: {e}')
+    except Exception:
+        logger.exception(f'Failed to restore stable message in guild {guild_id}')
         return False
 
 @client.event
@@ -234,13 +234,23 @@ def main():
     try:
         from web_ui import start_web_ui
         start_web_ui()
-    except Exception as e:
-        logger.error(f'Failed to start web UI: {e}')
+    except Exception:
+        logger.exception('Failed to start web UI')
 
     token = TOKEN or os.getenv('DISCORD_TOKEN')
     if not token:
         raise RuntimeError('DISCORD_TOKEN is not set')
     
+    loop = asyncio.get_event_loop()
+
+    def handle_loop_exception(loop, context):
+        logger.exception(
+            f"Unhandled exception in event loop: {context.get('message')}",
+            exc_info=context.get('exception'),
+        )
+
+    loop.set_exception_handler(handle_loop_exception)
+
     # Add graceful shutdown handler
     async def shutdown():
         logger.info('Shutting down bot gracefully...')
@@ -252,27 +262,27 @@ def main():
             # Save final state
             await data_manager.save_guilds_data(client)
             logger.info('Graceful shutdown completed')
-        except Exception as e:
-            logger.error(f'Error during shutdown: {e}')
-    
+        except Exception:
+            logger.exception('Error during shutdown')
+        finally:
+            await client.close()
+
     # Register shutdown handler
     import signal
-    
+
     def signal_handler(signum, frame):
         logger.info(f'Received signal {signum}, initiating shutdown...')
-        loop = asyncio.get_event_loop()
-        loop.create_task(shutdown())
-        loop.stop()
-    
+        asyncio.run_coroutine_threadsafe(shutdown(), loop)
+
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
+
     try:
         client.run(token)
     except KeyboardInterrupt:
         logger.info('Bot stopped by keyboard interrupt')
-    except Exception as e:
-        logger.error(f'Bot crashed: {e}')
+    except Exception:
+        logger.exception('Bot crashed')
         raise
 
 if __name__ == '__main__':
