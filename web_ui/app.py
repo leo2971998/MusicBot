@@ -116,10 +116,12 @@ def play_song_view(data):
         player_manager,
         data_manager,
     )
+    if not client.is_ready() or not getattr(client, 'loop', None) or client.loop.is_closed():
+        return {'error': 'Bot is not ready'}, 503
 
     future = asyncio.run_coroutine_threadsafe(coro, client.loop)
     try:
-        result = future.result()
+        result = future.result(timeout=15)
     except Exception:
         logger.exception("Error processing play request via web UI")
         return {'error': 'Failed to process request'}, 500

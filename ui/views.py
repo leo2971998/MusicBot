@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import discord
-import traceback
 from discord import ButtonStyle
 from discord.ui import View, Button
 from config import PlaybackMode
@@ -21,8 +20,11 @@ class MusicControlView(View):
 
     async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item):
         """Handle interaction errors with detailed logging and recovery"""
-        logger.error(f"Interaction error in guild {interaction.guild_id} for button '{item.label}': {error}")
-        logger.error(f"Full traceback: {traceback.format_exc()}")
+        logger.exception(
+            "Interaction error in guild %s for button '%s'",
+            interaction.guild_id,
+            item.label,
+        )
         logger.error(f"Interaction user: {interaction.user} ({interaction.user.id})")
         logger.error(f"Interaction channel: {interaction.channel} ({interaction.channel.id if interaction.channel else 'None'})")
         logger.error(f"Interaction guild: {interaction.guild} ({interaction.guild.id if interaction.guild else 'None'})")
@@ -45,8 +47,7 @@ class MusicControlView(View):
             else:
                 await interaction.followup.send(error_message, ephemeral=True)
         except Exception as followup_error:
-            logger.error(f"Failed to send error message: {followup_error}")
-            logger.error(f"Followup error traceback: {traceback.format_exc()}")
+            logger.exception("Failed to send error message")
             
         # Attempt to update the stable message to refresh the UI
         try:
@@ -79,17 +80,16 @@ class MusicControlView(View):
                 logger.debug("Successfully sent followup after InteractionResponded error")
                 return True
             except Exception as followup_error:
-                logger.error(f"Failed to send followup after InteractionResponded: {followup_error}")
+                logger.exception("Failed to send followup after InteractionResponded")
                 return False
-        except discord.errors.NotFound as e:
-            logger.error(f"Interaction not found (possibly expired): {e}")
+        except discord.errors.NotFound:
+            logger.exception("Interaction not found (possibly expired)")
             return False
-        except discord.errors.HTTPException as e:
-            logger.error(f"HTTP error in interaction response: {e}")
+        except discord.errors.HTTPException:
+            logger.exception("HTTP error in interaction response")
             return False
-        except Exception as e:
-            logger.error(f"Unexpected error in interaction response: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
+        except Exception:
+            logger.exception("Unexpected error in interaction response")
             return False
 
     @discord.ui.button(label='⏸️ Pause', style=ButtonStyle.primary)
@@ -115,9 +115,8 @@ class MusicControlView(View):
 
             await update_stable_message(guild_id)
             await self._delete_interaction_message_safe(interaction)
-        except Exception as e:
-            logger.error(f"Error in pause_button: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
+        except Exception:
+            logger.exception("Error in pause_button")
             raise  # Re-raise to trigger on_error
 
     @discord.ui.button(label='▶️ Resume', style=ButtonStyle.primary)
@@ -142,9 +141,8 @@ class MusicControlView(View):
 
             await update_stable_message(guild_id)
             await self._delete_interaction_message_safe(interaction)
-        except Exception as e:
-            logger.error(f"Error in resume_button: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
+        except Exception:
+            logger.exception("Error in resume_button")
             raise
 
     @discord.ui.button(label='⏭️ Skip', style=ButtonStyle.primary)
@@ -208,9 +206,8 @@ class MusicControlView(View):
 
             await update_stable_message(guild_id)
             await self._delete_interaction_message_safe(interaction)
-        except Exception as e:
-            logger.error(f"Error in skip_button: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
+        except Exception:
+            logger.exception("Error in skip_button")
             raise
 
     @discord.ui.button(label='⏹️ Stop', style=ButtonStyle.primary)
@@ -230,9 +227,8 @@ class MusicControlView(View):
             logger.debug(f"Successfully stopped music in guild {guild_id}")
             await update_stable_message(guild_id)
             await self._delete_interaction_message_safe(interaction)
-        except Exception as e:
-            logger.error(f"Error in stop_button: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
+        except Exception:
+            logger.exception("Error in stop_button")
             raise
 
     @discord.ui.button(label='🗑️ Clear Queue', style=ButtonStyle.danger)
@@ -253,9 +249,8 @@ class MusicControlView(View):
 
             await update_stable_message(guild_id)
             await self._delete_interaction_message_safe(interaction)
-        except Exception as e:
-            logger.error(f"Error in clear_queue_button: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
+        except Exception:
+            logger.exception("Error in clear_queue_button")
             raise
 
     @discord.ui.button(label='🔁 Normal', style=ButtonStyle.secondary)
@@ -272,9 +267,8 @@ class MusicControlView(View):
             logger.debug(f"Set playback mode to Normal in guild {guild_id}")
             await update_stable_message(guild_id)
             await self._delete_interaction_message_safe(interaction)
-        except Exception as e:
-            logger.error(f"Error in normal_mode_button: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
+        except Exception:
+            logger.exception("Error in normal_mode_button")
             raise
 
     @discord.ui.button(label='🔂 Repeat', style=ButtonStyle.secondary)
@@ -291,9 +285,8 @@ class MusicControlView(View):
             logger.debug(f"Set playback mode to Repeat in guild {guild_id}")
             await update_stable_message(guild_id)
             await self._delete_interaction_message_safe(interaction)
-        except Exception as e:
-            logger.error(f"Error in repeat_one_button: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
+        except Exception:
+            logger.exception("Error in repeat_one_button")
             raise
 
     @discord.ui.button(label='🔀 Shuffle', style=ButtonStyle.primary)
@@ -314,9 +307,8 @@ class MusicControlView(View):
 
             await update_stable_message(guild_id)
             await self._delete_interaction_message_safe(interaction)
-        except Exception as e:
-            logger.error(f"Error in shuffle_button: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
+        except Exception:
+            logger.exception("Error in shuffle_button")
             raise
 
     @discord.ui.button(label='🎵 Add Song (Normal)', style=ButtonStyle.success)
@@ -327,9 +319,8 @@ class MusicControlView(View):
             modal = AddSongModal(preview_mode=False)
             await interaction.response.send_modal(modal)
             logger.debug(f"Successfully sent modal for add song normal in guild {interaction.guild_id}")
-        except Exception as e:
-            logger.error(f"Error in add_song_normal_button: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
+        except Exception:
+            logger.exception("Error in add_song_normal_button")
             raise
 
     @discord.ui.button(label='🔍 Add Song (Preview)', style=ButtonStyle.success)
@@ -340,9 +331,8 @@ class MusicControlView(View):
             modal = AddSongModal(preview_mode=True)
             await interaction.response.send_modal(modal)
             logger.debug(f"Successfully sent modal for add song preview in guild {interaction.guild_id}")
-        except Exception as e:
-            logger.error(f"Error in add_song_preview_button: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
+        except Exception:
+            logger.exception("Error in add_song_preview_button")
             raise
 
     @discord.ui.button(label='➕ Play Next', style=ButtonStyle.success)
@@ -353,9 +343,8 @@ class MusicControlView(View):
             modal = AddSongModal(play_next=True)
             await interaction.response.send_modal(modal)
             logger.debug(f"Successfully sent modal for play next in guild {interaction.guild_id}")
-        except Exception as e:
-            logger.error(f"Error in add_next_song_button: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
+        except Exception:
+            logger.exception("Error in add_next_song_button")
             raise
 
     @discord.ui.button(label='❌ Remove', style=ButtonStyle.danger)
@@ -366,9 +355,8 @@ class MusicControlView(View):
             modal = RemoveSongModal()
             await interaction.response.send_modal(modal)
             logger.debug(f"Successfully sent modal for remove song in guild {interaction.guild_id}")
-        except Exception as e:
-            logger.error(f"Error in remove_button: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
+        except Exception:
+            logger.exception("Error in remove_button")
             raise
 
     async def _delete_interaction_message_safe(self, interaction: discord.Interaction, delay: float = 5.0):
@@ -383,6 +371,8 @@ class MusicControlView(View):
             logger.debug(f"Interaction message already deleted in guild {interaction.guild_id}")
         except discord.errors.Forbidden:
             logger.warning(f"No permission to delete interaction message in guild {interaction.guild_id}")
-        except Exception as e:
-            logger.error(f"Error deleting interaction message in guild {interaction.guild_id}: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
+        except Exception:
+            logger.exception(
+                "Error deleting interaction message in guild %s",
+                interaction.guild_id,
+            )
