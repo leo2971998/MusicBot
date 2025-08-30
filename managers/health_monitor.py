@@ -62,8 +62,8 @@ class HealthMonitor:
             while self.running:
                 try:
                     await self._perform_health_check()
-                except Exception as e:
-                    logger.error(f"Error in health check loop: {e}")
+                except Exception:
+                    logger.exception("Error in health check loop")
                 
                 await asyncio.sleep(HEALTH_CHECK_INTERVAL)
                 
@@ -78,8 +78,8 @@ class HealthMonitor:
             while self.running:
                 try:
                     await self._perform_memory_cleanup()
-                except Exception as e:
-                    logger.error(f"Error in memory cleanup loop: {e}")
+                except Exception:
+                    logger.exception("Error in memory cleanup loop")
                 
                 await asyncio.sleep(MEMORY_CLEANUP_INTERVAL)
                 
@@ -99,8 +99,8 @@ class HealthMonitor:
             logger.warning(f"Cleaning up unhealthy voice client for guild {guild_id}")
             try:
                 await self.player_manager.disconnect_voice_client(guild_id, cleanup_tasks=True)
-            except Exception as e:
-                logger.error(f"Error cleaning up unhealthy voice client for guild {guild_id}: {e}")
+            except Exception:
+                logger.exception(f"Error cleaning up unhealthy voice client for guild {guild_id}")
                 
         # Check for orphaned tasks
         await self._cleanup_orphaned_tasks()
@@ -170,8 +170,8 @@ class HealthMonitor:
         for guild_id in invalid_guilds:
             try:
                 await self._cleanup_guild(guild_id)
-            except Exception as e:
-                logger.error(f"Error cleaning up guild {guild_id}: {e}")
+            except Exception:
+                logger.exception(f"Error cleaning up guild {guild_id}")
                 
         if invalid_guilds:
             logger.info(f"Cleaned up {len(invalid_guilds)} invalid/inactive guilds")

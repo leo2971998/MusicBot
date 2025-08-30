@@ -57,8 +57,8 @@ async def update_stable_message(guild_id: str):
                 except discord.Forbidden:
                     logger.error(f"Permission denied: Cannot create messages in channel {channel_id}")
                     return
-                except Exception as e:
-                    logger.error(f"Failed to create stable message: {e}")
+                except Exception:
+                    logger.exception("Failed to create stable message")
                     return
 
         # Create embeds with enhanced error handling
@@ -89,14 +89,15 @@ async def update_stable_message(guild_id: str):
             if not embeds:
                 embeds = [discord.Embed(title='🎶 Music Bot', description='UI temporarily unavailable', color=0xff0000)]
 
-            # Create fresh view for better button responsiveness
-            view = MusicControlView()
+            # Create persistent view so buttons stay active
+            view = MusicControlView(timeout=None)
             
             # Update message with retry logic
             max_retries = 3
             for attempt in range(max_retries):
                 try:
                     await stable_message.edit(embeds=embeds, view=view)
+                    client.add_view(view, message_id=stable_message.id)
                     logger.debug(f"Successfully updated stable message for guild {guild_id} (attempt {attempt + 1})")
                     break
                 except discord.NotFound:
@@ -107,10 +108,11 @@ async def update_stable_message(guild_id: str):
                         guild_data['stable_message'] = stable_message
                         guild_data['stable_message_id'] = stable_message.id
                         await stable_message.edit(embeds=embeds, view=view)
+                        client.add_view(view, message_id=stable_message.id)
                         logger.info(f"Created and updated new stable message {stable_message.id} for guild {guild_id}")
                         break
-                    except Exception as recreate_error:
-                        logger.error(f"Failed to recreate stable message: {recreate_error}")
+                    except Exception:
+                        logger.exception("Failed to recreate stable message")
                         return
                 except discord.Forbidden:
                     logger.error(f"Permission denied: Cannot edit message in guild {guild_id}")
@@ -132,19 +134,18 @@ async def update_stable_message(guild_id: str):
                         logger.error(f"Unexpected error updating stable message in guild {guild_id} after {max_retries} attempts: {e}")
                         return
 
-        except Exception as e:
-            logger.error(f"Critical error creating embeds/view for guild {guild_id}: {e}")
+        except Exception:
+            logger.exception(f"Critical error creating embeds/view for guild {guild_id}")
             return
 
         # Save guild data
         try:
             await data_manager.save_guilds_data(client)
-        except Exception as save_error:
-            logger.error(f"Failed to save guild data: {save_error}")
+        except Exception:
+            logger.exception("Failed to save guild data")
 
-    except Exception as e:
-        logger.error(f"Critical error in update_stable_message for guild {guild_id}: {e}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
+    except Exception:
+        logger.exception(f"Critical error in update_stable_message for guild {guild_id}")
 
 def create_credits_embed() -> Embed:
     """Create the credits embed"""
