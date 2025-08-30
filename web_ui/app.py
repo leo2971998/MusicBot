@@ -1,9 +1,11 @@
 import threading
 import asyncio
 import os
+import logging
 from flask import Flask, request, jsonify, render_template_string
 
 app = Flask(__name__)
+logger = logging.getLogger(__name__)
 
 
 INDEX_TEMPLATE = """
@@ -40,10 +42,14 @@ def start_web_ui(host: str = "0.0.0.0", port: int = 8080):
     """
     host = os.getenv("WEB_UI_HOST", host)
     port = int(os.getenv("WEB_UI_PORT", str(port)))
-    thread = threading.Thread(
-        target=lambda: app.run(host=host, port=port, debug=False, use_reloader=False),
-        daemon=True,
-    )
+
+    def run_app():
+        try:
+            app.run(host=host, port=port, debug=False, use_reloader=False)
+        except Exception:
+            logger.exception("Web UI crashed")
+
+    thread = threading.Thread(target=run_app, daemon=True)
     thread.start()
 
 
@@ -112,5 +118,9 @@ def play_song_view(data):
     )
 
     future = asyncio.run_coroutine_threadsafe(coro, client.loop)
-    result = future.result()
+    try:
+        result = future.result()
+    except Exception:
+        logger.exception("Error processing play request via web UI")
+        return {'error': 'Failed to process request'}, 500
     return {'message': result}, 200
