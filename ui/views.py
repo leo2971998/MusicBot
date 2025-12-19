@@ -1,16 +1,174 @@
 import asyncio
 import logging
 import discord
-from discord import ButtonStyle
-from discord.ui import View, Button
+from discord import ButtonStyle, Embed
+from discord.ui import View, Button, Select
 from config import PlaybackMode
 logger = logging.getLogger(__name__)
+
+class PlaybackModeSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label='Normal', emoji='🔁', value='normal', description='Play through queue once'),
+            discord.SelectOption(label='Repeat Song', emoji='🔂', value='repeat_one', description='Repeat current song'),
+            discord.SelectOption(label='Repeat Queue', emoji='🔄', value='repeat_all', description='Loop entire queue'),
+        ]
+        super().__init__(placeholder='🎵 Playback Mode', options=options, row=3)
+
+    async def callback(self, interaction: discord.Interaction):
+        from bot_state import client, queue_manager
+        from ui.embeds import update_stable_message
+        
+        guild_id = str(interaction.guild.id)
+        mode_map = {
+            'normal': PlaybackMode.NORMAL,
+            'repeat_one': PlaybackMode.REPEAT_ONE,
+            'repeat_all': PlaybackMode.REPEAT_ALL,
+        }
+        
+        selected_mode = self.values[0]
+        client.playback_modes[guild_id] = mode_map[selected_mode]
+        
+        # Save playlist snapshot when switching to repeat all mode
+        if selected_mode == 'repeat_all':
+            current_song = client.guilds_data[guild_id].get('current_song')
+            # Save current queue + current song for looping
+            if current_song or queue_manager.get_queue_length(guild_id) > 0:
+                # Create a snapshot of the complete playlist (current song + queue)
+                playlist = []
+                if current_song:
+                    playlist.append(current_song)
+                playlist.extend(queue_manager.get_queue(guild_id))
+                queue_manager.repeat_all_playlists[guild_id] = playlist
+                logger.info(f"Saved {len(playlist)} songs for repeat all mode in guild {guild_id}")
+        
+        mode_labels = {
+            'normal': 'Normal',
+            'repeat_one': 'Repeat Song',
+            'repeat_all': 'Repeat Queue',
+        }
+        
+        await interaction.response.send_message(
+            f'🎵 Playback mode: **{mode_labels[self.values[0]]}**', 
+            ephemeral=True
+        )
+        logger.debug(f"Set playback mode to {self.values[0]} in guild {guild_id}")
+        await update_stable_message(guild_id)
+
+class QueuePaginationView(View):
+    """Pagination view for browsing large queues"""
+    def __init__(self, guild_id: str, current_page: int = 1):
+        super().__init__(timeout=60)
+        self.guild_id = guild_id
+        self.current_page = current_page
+
+    @discord.ui.button(label='◀️ Prev', style=ButtonStyle.secondary)
+    async def prev_page(self, interaction: discord.Interaction, button: Button):
+        """Go to previous page"""
+        try:
+            from bot_state import queue_manager
+            
+            self.current_page = max(1, self.current_page - 1)
+            
+            # Get queue page to check if we have content
+            songs, total_pages, _ = queue_manager.get_queue_page(self.guild_id, self.current_page)
+            
+            if not songs and total_pages == 0:
+                await interaction.response.send_message('❌ Queue is empty', ephemeral=True)
+                return
+            
+            # Create paginated embed
+            embed = self._create_queue_embed_paginated(self.current_page)
+            
+            # Update buttons state
+            self._update_button_states(total_pages)
+            
+            await interaction.response.edit_message(embed=embed, view=self)
+            logger.debug(f"Queue pagination: moved to page {self.current_page} in guild {self.guild_id}")
+        except Exception as e:
+            logger.error(f"Error in prev_page: {e}")
+            await interaction.response.send_message('❌ Error navigating queue', ephemeral=True)
+
+    @discord.ui.button(label='Next ▶️', style=ButtonStyle.secondary)
+    async def next_page(self, interaction: discord.Interaction, button: Button):
+        """Go to next page"""
+        try:
+            from bot_state import queue_manager
+            
+            _, total_pages, _ = queue_manager.get_queue_page(self.guild_id, self.current_page)
+            
+            if total_pages == 0:
+                await interaction.response.send_message('❌ Queue is empty', ephemeral=True)
+                return
+            
+            self.current_page = min(total_pages, self.current_page + 1)
+            
+            # Create paginated embed
+            embed = self._create_queue_embed_paginated(self.current_page)
+            
+            # Update buttons state
+            self._update_button_states(total_pages)
+            
+            await interaction.response.edit_message(embed=embed, view=self)
+            logger.debug(f"Queue pagination: moved to page {self.current_page} in guild {self.guild_id}")
+        except Exception as e:
+            logger.error(f"Error in next_page: {e}")
+            await interaction.response.send_message('❌ Error navigating queue', ephemeral=True)
+
+    def _update_button_states(self, total_pages: int):
+        """Update button enabled/disabled states based on current page"""
+        for item in self.children:
+            if isinstance(item, Button):
+                if item.label == '◀️ Prev':
+                    item.disabled = (self.current_page <= 1)
+                elif item.label == 'Next ▶️':
+                    item.disabled = (self.current_page >= total_pages)
+
+    def _create_queue_embed_paginated(self, page: int = 1) -> Embed:
+        """Create paginated queue embed"""
+        try:
+            from bot_state import queue_manager
+            
+            songs, total_pages, current_page = queue_manager.get_queue_page(self.guild_id, page, per_page=10)
+            
+            def get_source_icon(song):
+                return "🎧" if song.get('source') == 'spotify' else "📺"
+            
+            if songs:
+                # Calculate starting position for this page
+                start_pos = (current_page - 1) * 10
+                
+                queue_description = '\n'.join(
+                    f"{start_pos + idx + 1}. {get_source_icon(song)} **[{song['title']}]({song.get('spotify_url', song.get('webpage_url'))})** — *{song.get('requester', 'Unknown')}*"
+                    for idx, song in enumerate(songs)
+                )
+            else:
+                queue_description = 'No songs in the queue.'
+            
+            embed = Embed(
+                title=f'📜 Queue (Page {current_page}/{total_pages if total_pages > 0 else 1})',
+                description=queue_description,
+                color=0x1db954
+            )
+            
+            total_songs = queue_manager.get_queue_length(self.guild_id)
+            embed.set_footer(text=f"Total songs in queue: {total_songs} | Page {current_page} of {total_pages if total_pages > 0 else 1}")
+            
+            return embed
+        except Exception as e:
+            logger.error(f"Error creating paginated queue embed: {e}")
+            return Embed(
+                title='📜 Queue',
+                description='Error loading queue.',
+                color=0xff0000
+            )
 
 class MusicControlView(View):
     """Improved music control view with better error handling"""
 
-    def __init__(self, timeout: float = 300.0):
+    def __init__(self, timeout: float = None):
         super().__init__(timeout=timeout)
+        self.add_item(PlaybackModeSelect())
 
     async def on_timeout(self):
         """Handle view timeout"""
@@ -92,7 +250,8 @@ class MusicControlView(View):
             logger.exception("Unexpected error in interaction response")
             return False
 
-    @discord.ui.button(label='⏸️ Pause', style=ButtonStyle.primary)
+    # Row 0: Playback controls (emoji-only for cleaner look)
+    @discord.ui.button(label='⏸️', style=ButtonStyle.primary, row=0)
     async def pause_button(self, interaction: discord.Interaction, button: Button):
         try:
             # Import here to avoid circular imports
@@ -119,7 +278,7 @@ class MusicControlView(View):
             logger.exception("Error in pause_button")
             raise  # Re-raise to trigger on_error
 
-    @discord.ui.button(label='▶️ Resume', style=ButtonStyle.primary)
+    @discord.ui.button(label='▶️', style=ButtonStyle.primary, row=0)
     async def resume_button(self, interaction: discord.Interaction, button: Button):
         try:
             from bot_state import player_manager
@@ -145,7 +304,7 @@ class MusicControlView(View):
             logger.exception("Error in resume_button")
             raise
 
-    @discord.ui.button(label='⏭️ Skip', style=ButtonStyle.primary)
+    @discord.ui.button(label='⏭️', style=ButtonStyle.primary, row=0)
     async def skip_button(self, interaction: discord.Interaction, button: Button):
         try:
             from bot_state import player_manager, client
@@ -210,7 +369,7 @@ class MusicControlView(View):
             logger.exception("Error in skip_button")
             raise
 
-    @discord.ui.button(label='⏹️ Stop', style=ButtonStyle.primary)
+    @discord.ui.button(label='⏹️', style=ButtonStyle.danger, row=0)
     async def stop_button(self, interaction: discord.Interaction, button: Button):
         try:
             from bot_state import player_manager, client, queue_manager
@@ -231,65 +390,8 @@ class MusicControlView(View):
             logger.exception("Error in stop_button")
             raise
 
-    @discord.ui.button(label='🗑️ Clear Queue', style=ButtonStyle.danger)
-    async def clear_queue_button(self, interaction: discord.Interaction, button: Button):
-        try:
-            from bot_state import queue_manager
-            from ui.embeds import update_stable_message
-
-            guild_id = str(interaction.guild.id)
-            logger.debug(f"Clear queue button clicked in guild {interaction.guild_id} by user {interaction.user}")
-            count = queue_manager.clear_queue(guild_id)
-            logger.debug(f"Cleared {count} songs from queue in guild {guild_id}")
-
-            if count > 0:
-                await self._safe_interaction_response(interaction, f'🗑️ Cleared {count} songs from the queue.')
-            else:
-                await self._safe_interaction_response(interaction, '❌ The queue is already empty.')
-
-            await update_stable_message(guild_id)
-            await self._delete_interaction_message_safe(interaction)
-        except Exception:
-            logger.exception("Error in clear_queue_button")
-            raise
-
-    @discord.ui.button(label='🔁 Normal', style=ButtonStyle.secondary)
-    async def normal_mode_button(self, interaction: discord.Interaction, button: Button):
-        try:
-            from bot_state import client
-            from ui.embeds import update_stable_message
-
-            guild_id = str(interaction.guild.id)
-            logger.debug(f"Normal mode button clicked in guild {interaction.guild_id} by user {interaction.user}")
-            client.playback_modes[guild_id] = PlaybackMode.NORMAL
-
-            await self._safe_interaction_response(interaction, 'Playback mode set to: **Normal**')
-            logger.debug(f"Set playback mode to Normal in guild {guild_id}")
-            await update_stable_message(guild_id)
-            await self._delete_interaction_message_safe(interaction)
-        except Exception:
-            logger.exception("Error in normal_mode_button")
-            raise
-
-    @discord.ui.button(label='🔂 Repeat', style=ButtonStyle.secondary)
-    async def repeat_one_button(self, interaction: discord.Interaction, button: Button):
-        try:
-            from bot_state import client
-            from ui.embeds import update_stable_message
-
-            guild_id = str(interaction.guild.id)
-            logger.debug(f"Repeat button clicked in guild {interaction.guild_id} by user {interaction.user}")
-            client.playback_modes[guild_id] = PlaybackMode.REPEAT_ONE
-
-            await self._safe_interaction_response(interaction, 'Playback mode set to: **Repeat**')
-            logger.debug(f"Set playback mode to Repeat in guild {guild_id}")
-            await update_stable_message(guild_id)
-            await self._delete_interaction_message_safe(interaction)
-        except Exception:
-            logger.exception("Error in repeat_one_button")
-            raise
-
-    @discord.ui.button(label='🔀 Shuffle', style=ButtonStyle.primary)
+    # Row 1: Queue management
+    @discord.ui.button(label='🔀', style=ButtonStyle.secondary, row=1)
     async def shuffle_button(self, interaction: discord.Interaction, button: Button):
         try:
             from bot_state import queue_manager
@@ -311,31 +413,66 @@ class MusicControlView(View):
             logger.exception("Error in shuffle_button")
             raise
 
-    @discord.ui.button(label='🎵 Add Song (Normal)', style=ButtonStyle.success)
-    async def add_song_normal_button(self, interaction: discord.Interaction, button: Button):
+    @discord.ui.button(label='🗑️ Clear', style=ButtonStyle.danger, row=1)
+    async def clear_queue_button(self, interaction: discord.Interaction, button: Button):
         try:
-            from ui.modals import AddSongModal
-            logger.debug(f"Add song normal button clicked in guild {interaction.guild_id} by user {interaction.user}")
-            modal = AddSongModal(preview_mode=False)
-            await interaction.response.send_modal(modal)
-            logger.debug(f"Successfully sent modal for add song normal in guild {interaction.guild_id}")
+            from bot_state import queue_manager
+            from ui.embeds import update_stable_message
+
+            guild_id = str(interaction.guild.id)
+            logger.debug(f"Clear queue button clicked in guild {interaction.guild_id} by user {interaction.user}")
+            count = queue_manager.clear_queue(guild_id)
+            logger.debug(f"Cleared {count} songs from queue in guild {guild_id}")
+
+            if count > 0:
+                await self._safe_interaction_response(interaction, f'🗑️ Cleared {count} songs from the queue.')
+            else:
+                await self._safe_interaction_response(interaction, '❌ The queue is already empty.')
+
+            await update_stable_message(guild_id)
+            await self._delete_interaction_message_safe(interaction)
         except Exception:
-            logger.exception("Error in add_song_normal_button")
+            logger.exception("Error in clear_queue_button")
             raise
 
-    @discord.ui.button(label='🔍 Add Song (Preview)', style=ButtonStyle.success)
-    async def add_song_preview_button(self, interaction: discord.Interaction, button: Button):
+    @discord.ui.button(label='↕️ Move', style=ButtonStyle.secondary, row=1)
+    async def move_button(self, interaction: discord.Interaction, button: Button):
+        try:
+            from ui.modals import MoveSongModal
+            logger.debug(f"Move button clicked in guild {interaction.guild_id} by user {interaction.user}")
+            modal = MoveSongModal()
+            await interaction.response.send_modal(modal)
+            logger.debug(f"Successfully sent modal for move song in guild {interaction.guild_id}")
+        except Exception:
+            logger.exception("Error in move_button")
+            raise
+
+    @discord.ui.button(label='❌ Remove', style=ButtonStyle.danger, row=1)
+    async def remove_button(self, interaction: discord.Interaction, button: Button):
+        try:
+            from ui.modals import RemoveRangeModal
+            logger.debug(f"Remove button clicked in guild {interaction.guild_id} by user {interaction.user}")
+            modal = RemoveRangeModal()
+            await interaction.response.send_modal(modal)
+            logger.debug(f"Successfully sent modal for remove song in guild {interaction.guild_id}")
+        except Exception:
+            logger.exception("Error in remove_button")
+            raise
+
+    # Row 2: Add songs
+    @discord.ui.button(label='🎵 Add Song', style=ButtonStyle.success, row=2)
+    async def add_song_button(self, interaction: discord.Interaction, button: Button):
         try:
             from ui.modals import AddSongModal
-            logger.debug(f"Add song preview button clicked in guild {interaction.guild_id} by user {interaction.user}")
+            logger.debug(f"Add song button clicked in guild {interaction.guild_id} by user {interaction.user}")
             modal = AddSongModal(preview_mode=True)
             await interaction.response.send_modal(modal)
-            logger.debug(f"Successfully sent modal for add song preview in guild {interaction.guild_id}")
+            logger.debug(f"Successfully sent modal for add song in guild {interaction.guild_id}")
         except Exception:
-            logger.exception("Error in add_song_preview_button")
+            logger.exception("Error in add_song_button")
             raise
 
-    @discord.ui.button(label='➕ Play Next', style=ButtonStyle.success)
+    @discord.ui.button(label='➕ Play Next', style=ButtonStyle.success, row=2)
     async def add_next_song_button(self, interaction: discord.Interaction, button: Button):
         try:
             from ui.modals import AddSongModal
@@ -347,16 +484,32 @@ class MusicControlView(View):
             logger.exception("Error in add_next_song_button")
             raise
 
-    @discord.ui.button(label='❌ Remove', style=ButtonStyle.danger)
-    async def remove_button(self, interaction: discord.Interaction, button: Button):
+    @discord.ui.button(label='📋 View Queue', style=ButtonStyle.primary, row=2)
+    async def view_queue_button(self, interaction: discord.Interaction, button: Button):
         try:
-            from ui.modals import RemoveSongModal
-            logger.debug(f"Remove button clicked in guild {interaction.guild_id} by user {interaction.user}")
-            modal = RemoveSongModal()
-            await interaction.response.send_modal(modal)
-            logger.debug(f"Successfully sent modal for remove song in guild {interaction.guild_id}")
+            from bot_state import queue_manager
+            logger.debug(f"View queue button clicked in guild {interaction.guild_id} by user {interaction.user}")
+            
+            guild_id = str(interaction.guild.id)
+            queue_length = queue_manager.get_queue_length(guild_id)
+            
+            if queue_length == 0:
+                await interaction.response.send_message('📋 The queue is empty.', ephemeral=True)
+                return
+            
+            # Create paginated view and embed
+            view = QueuePaginationView(guild_id, current_page=1)
+            embed = view._create_queue_embed_paginated(page=1)
+            
+            # Update button states
+            from bot_state import queue_manager
+            _, total_pages, _ = queue_manager.get_queue_page(guild_id, 1)
+            view._update_button_states(total_pages)
+            
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            logger.debug(f"Successfully sent paginated queue view in guild {interaction.guild_id}")
         except Exception:
-            logger.exception("Error in remove_button")
+            logger.exception("Error in view_queue_button")
             raise
 
     async def _delete_interaction_message_safe(self, interaction: discord.Interaction, delay: float = 5.0):

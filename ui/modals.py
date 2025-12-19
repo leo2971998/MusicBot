@@ -345,3 +345,152 @@ class RemoveSongModal(Modal):
                 )
         except Exception:
             pass
+
+class MoveSongModal(Modal):
+    """Modal for moving a song from one position to another in the queue"""
+    def __init__(self):
+        super().__init__(title="Move Song")
+        self.from_pos = TextInput(
+            label="From Position",
+            placeholder="e.g., 3",
+            required=True,
+            max_length=5
+        )
+        self.to_pos = TextInput(
+            label="To Position",
+            placeholder="e.g., 1",
+            required=True,
+            max_length=5
+        )
+        self.add_item(self.from_pos)
+        self.add_item(self.to_pos)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        logger.debug(f"MoveSongModal submitted in guild {interaction.guild_id}")
+        from bot_state import queue_manager
+        from ui.embeds import update_stable_message
+        
+        try:
+            from_p = int(self.from_pos.value.strip())
+            to_p = int(self.to_pos.value.strip())
+            guild_id = str(interaction.guild.id)
+            
+            if queue_manager.move_song(guild_id, from_p, to_p):
+                await interaction.response.send_message(
+                    f'✅ Moved song from position #{from_p} to #{to_p}',
+                    ephemeral=True
+                )
+                await update_stable_message(guild_id)
+            else:
+                await interaction.response.send_message(
+                    '❌ Invalid positions. Check queue length and try again.',
+                    ephemeral=True
+                )
+        except ValueError:
+            await interaction.response.send_message(
+                '❌ Please enter valid numbers for both positions.',
+                ephemeral=True
+            )
+        except Exception as e:
+            logger.error(f"Error in MoveSongModal: {e}")
+            await interaction.response.send_message(
+                "❌ An error occurred while moving the song.",
+                ephemeral=True
+            )
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        logger.error(f"Move modal error: {error}")
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "❌ An error occurred while processing your request.",
+                    ephemeral=True
+                )
+        except Exception:
+            pass
+
+class RemoveRangeModal(Modal):
+    """Enhanced remove modal - supports single position, range, or comma-separated positions"""
+    def __init__(self):
+        super().__init__(title="Remove Songs")
+        self.positions = TextInput(
+            label="Position(s)",
+            placeholder="e.g., 5 or 3-7 or 1,3,5",
+            required=True,
+            max_length=50
+        )
+        self.add_item(self.positions)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        logger.debug(f"RemoveRangeModal submitted in guild {interaction.guild_id}")
+        from bot_state import queue_manager
+        from ui.embeds import update_stable_message
+        
+        guild_id = str(interaction.guild.id)
+        input_val = self.positions.value.strip()
+        removed = 0
+        
+        try:
+            if '-' in input_val:
+                # Range: "3-7"
+                parts = input_val.split('-')
+                if len(parts) != 2:
+                    raise ValueError("Invalid range format")
+                start, end = map(int, parts)
+                removed = queue_manager.remove_range(guild_id, start, end)
+                await interaction.response.send_message(
+                    f'🗑️ Removed {removed} song(s) from positions {start} to {end}',
+                    ephemeral=True
+                )
+            elif ',' in input_val:
+                # Multiple: "1,3,5" - remove in reverse order to maintain indices
+                positions = sorted([int(p.strip()) for p in input_val.split(',')], reverse=True)
+                for pos in positions:
+                    if queue_manager.remove_song(guild_id, pos):
+                        removed += 1
+                await interaction.response.send_message(
+                    f'🗑️ Removed {removed} song(s) from specified positions',
+                    ephemeral=True
+                )
+            else:
+                # Single: "5"
+                pos = int(input_val)
+                removed_song = queue_manager.remove_song(guild_id, pos)
+                if removed_song:
+                    removed = 1
+                    await interaction.response.send_message(
+                        f'🗑️ Removed **{removed_song.get("title", "Unknown")}** from position {pos}',
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.response.send_message(
+                        f'❌ No song found at position {pos}',
+                        ephemeral=True
+                    )
+            
+            # Update the stable message if any songs were removed
+            if removed > 0:
+                await update_stable_message(guild_id)
+                
+        except ValueError:
+            await interaction.response.send_message(
+                '❌ Invalid format. Use: single (5), range (3-7), or comma-separated (1,3,5)',
+                ephemeral=True
+            )
+        except Exception as e:
+            logger.error(f"Error in RemoveRangeModal: {e}")
+            await interaction.response.send_message(
+                "❌ An error occurred while removing songs.",
+                ephemeral=True
+            )
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        logger.error(f"RemoveRange modal error: {error}")
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "❌ An error occurred while processing your request.",
+                    ephemeral=True
+                )
+        except Exception:
+            pass

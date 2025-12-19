@@ -8,6 +8,8 @@ from config import YTDL_FORMAT_OPTS, FFMPEG_OPTIONS, PlaybackMode, FULL_METADATA
 from utils.validators import is_setup
 from utils.search_cache import search_cache
 from utils.search_optimizer import search_optimizer
+from utils.retry import retry_async
+from utils.cache import song_cache
 
 logger = logging.getLogger(__name__)
 
@@ -287,18 +289,29 @@ async def process_play_request(user, guild, channel, link, client, queue_manager
         return "❌ An error occurred while processing your request."
 
 async def _extract_song_data(link, search_mode=False):
-    """Extract song data using optimized yt-dlp with caching and two-phase approach"""
-    try:
+    """Extract song data using optimized yt-dlp with caching and two-phase approach with retry logic"""
+    
+    # Check song_cache first (LRU cache with size limit - fast and memory-efficient)
+    cached_result = song_cache.get(link)
+    if cached_result is not None:
+        logger.debug(f"Song cache hit for: {link[:50]}")
+        return cached_result
+    
+    # Check cache first (outside retry loop to avoid redundant cache checks)
+    is_search = 'list=' not in link and 'watch?v=' not in link and 'youtu.be/' not in link
+    
+    if is_search:
+        cached_result = search_cache.get(link, search_mode)
+        if cached_result is not None:
+            logger.debug(f"Search cache hit for query: {link[:50]}")
+            # Also cache in song_cache for faster future access
+            song_cache.set(link, cached_result)
+            return cached_result
+    
+    # Inner function with actual extraction logic
+    async def _do_extract():
         # Determine if it's a search or direct link
-        is_search = 'list=' not in link and 'watch?v=' not in link and 'youtu.be/' not in link
-        
         if is_search:
-            # Check cache first
-            cached_result = search_cache.get(link, search_mode)
-            if cached_result is not None:
-                logger.debug(f"Returning cached results for query: {link}")
-                return cached_result
-            
             # Preprocess query for better results
             optimized_query = search_optimizer.preprocess_query(link)
             
@@ -357,9 +370,19 @@ async def _extract_song_data(link, search_mode=False):
             return result
 
         return None
-
+    
+    # Execute with retry logic
+    try:
+        result = await retry_async(_do_extract, max_retries=3, base_delay=1.0)
+        
+        # Cache successful results in song_cache for faster future access
+        if result:
+            song_cache.set(link, result)
+            logger.debug(f"Cached extraction result in song_cache for: {link[:50]}")
+        
+        return result
     except Exception as e:
-        logger.error(f"Error extracting song data: {e}")
+        logger.error(f"Error extracting song data after all retries: {e}")
         return None
 
 async def _process_single_song(song_data, user, guild_id, client, queue_manager,
@@ -441,10 +464,12 @@ async def _process_playlist(song_data, user, guild_id, client, queue_manager,
         logger.error(f"Error processing playlist: {e}")
         return "❌ Error processing the playlist."
 
-async def _play_song(guild_id, song_info, client, player_manager, queue_manager, data_manager):
-    """Play a specific song"""
+async def _play_song(guild_id, song_info, client, player_manager, queue_manager, data_manager, retry_count=0):
+    """Play a specific song with retry logic for failed URLs"""
+    max_retries = 2
+    
     try:
-        logger.debug(f"_play_song called in guild {guild_id} with {song_info.get('title')}")
+        logger.debug(f"_play_song called in guild {guild_id} with {song_info.get('title')} (retry {retry_count}/{max_retries})")
         voice_client = player_manager.voice_clients.get(guild_id)
         if not voice_client:
             logger.error(f"No voice client for guild {guild_id}")
@@ -456,10 +481,33 @@ async def _play_song(guild_id, song_info, client, player_manager, queue_manager,
         song_id = song_info.get('id', song_info.get('webpage_url', 'unknown'))
         VoteManager.reset_votes(guild_data, song_id)
 
-        # Create audio source
+        # Get URL - if it's expired or missing, try to refresh it
         url = song_info.get('url')
+        if not url or retry_count > 0:
+            logger.info(f"Refreshing URL for song in guild {guild_id}")
+            webpage_url = song_info.get('webpage_url')
+            if webpage_url:
+                # Re-extract the song data to get a fresh URL
+                async def _refresh_url():
+                    loop = asyncio.get_running_loop()
+                    result = await loop.run_in_executor(
+                        None, lambda: full_metadata_ytdl.extract_info(webpage_url, download=False)
+                    )
+                    return result
+                
+                try:
+                    refreshed_data = await retry_async(_refresh_url, max_retries=2, base_delay=0.5)
+                    if refreshed_data and refreshed_data.get('url'):
+                        url = refreshed_data['url']
+                        song_info['url'] = url  # Update the song info with fresh URL
+                        logger.info(f"Successfully refreshed URL for '{song_info.get('title')}'")
+                except Exception as refresh_error:
+                    logger.error(f"Failed to refresh URL: {refresh_error}")
+        
         if not url:
             logger.error(f"No URL found for song in guild {guild_id}")
+            # Skip to next song
+            await _play_next_song(guild_id, client, queue_manager, player_manager, data_manager)
             return
 
         source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
@@ -468,10 +516,20 @@ async def _play_song(guild_id, song_info, client, player_manager, queue_manager,
         def after_playing(error):
             if error:
                 logger.error(f"Player error in guild {guild_id}: {error}")
-
-            # Schedule next song
-            coro = _play_next_song(guild_id, client, queue_manager, player_manager, data_manager)
-            asyncio.run_coroutine_threadsafe(coro, client.loop)
+                
+                # If there's a playback error and we haven't exceeded retries, try again
+                if retry_count < max_retries and ("403" in str(error) or "HTTP" in str(error)):
+                    logger.info(f"Attempting to retry playback (attempt {retry_count + 1}/{max_retries})")
+                    coro = _play_song(guild_id, song_info, client, player_manager, queue_manager, data_manager, retry_count + 1)
+                    asyncio.run_coroutine_threadsafe(coro, client.loop)
+                else:
+                    # Skip to next song
+                    coro = _play_next_song(guild_id, client, queue_manager, player_manager, data_manager)
+                    asyncio.run_coroutine_threadsafe(coro, client.loop)
+            else:
+                # Normal song end - play next
+                coro = _play_next_song(guild_id, client, queue_manager, player_manager, data_manager)
+                asyncio.run_coroutine_threadsafe(coro, client.loop)
 
         # Start playing
         await player_manager.play_audio_source(guild_id, source, after_playing)
@@ -487,6 +545,12 @@ async def _play_song(guild_id, song_info, client, player_manager, queue_manager,
 
     except Exception as e:
         logger.error(f"Error playing song in guild {guild_id}: {e}")
+        
+        # Try to recover by skipping to next song
+        try:
+            await _play_next_song(guild_id, client, queue_manager, player_manager, data_manager)
+        except Exception as recovery_error:
+            logger.error(f"Failed to recover from playback error: {recovery_error}")
 
 async def _play_next_song(guild_id, client, queue_manager, player_manager, data_manager):
     """Play the next song in queue"""
@@ -507,16 +571,34 @@ async def _play_next_song(guild_id, client, queue_manager, player_manager, data_
             client.guilds_data[guild_id]['current_song'] = next_song
             await _play_song(guild_id, next_song, client, player_manager, queue_manager, data_manager)
         else:
-            # No more songs, clean up
-            client.guilds_data[guild_id]['current_song'] = None
-            client.playback_modes[guild_id] = PlaybackMode.NORMAL
+            # No more songs in queue
+            if playback_mode == PlaybackMode.REPEAT_ALL:
+                # Restore the playlist and start over
+                if queue_manager.restore_repeat_all_playlist(guild_id):
+                    next_song = queue_manager.get_next_song(guild_id)
+                    if next_song:
+                        client.guilds_data[guild_id]['current_song'] = next_song
+                        await _play_song(guild_id, next_song, client, player_manager, queue_manager, data_manager)
+                        logger.info(f"Restarting playlist for repeat all mode in guild {guild_id}")
+                    else:
+                        # Empty playlist, clean up
+                        client.guilds_data[guild_id]['current_song'] = None
+                        client.playback_modes[guild_id] = PlaybackMode.NORMAL
+                else:
+                    # No saved playlist, clean up
+                    client.guilds_data[guild_id]['current_song'] = None
+                    client.playback_modes[guild_id] = PlaybackMode.NORMAL
+            else:
+                # Normal mode: no more songs, clean up
+                client.guilds_data[guild_id]['current_song'] = None
+                client.playback_modes[guild_id] = PlaybackMode.NORMAL
 
-            # Schedule disconnect after delay
-            from config import IDLE_DISCONNECT_DELAY
-            disconnect_task = asyncio.create_task(
-                _disconnect_after_delay(guild_id, player_manager, IDLE_DISCONNECT_DELAY)
-            )
-            player_manager.add_task(guild_id, 'disconnect_task', disconnect_task)
+                # Schedule disconnect after delay
+                from config import IDLE_DISCONNECT_DELAY
+                disconnect_task = asyncio.create_task(
+                    _disconnect_after_delay(guild_id, player_manager, IDLE_DISCONNECT_DELAY)
+                )
+                player_manager.add_task(guild_id, 'disconnect_task', disconnect_task)
 
         # Update UI
         from ui.embeds import update_stable_message

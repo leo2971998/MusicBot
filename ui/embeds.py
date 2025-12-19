@@ -203,6 +203,20 @@ def create_now_playing_embed(guild_id: str, guild_data: dict) -> Embed:
                     vote_text = f"🗳️ **{vote_status['current_votes']}/{vote_status['required_votes']}** votes to skip\n`{progress_bar}` {vote_status['percentage']}%"
                     embed.add_field(name='Vote Skip Progress', value=vote_text, inline=False)
 
+            # Add connection quality indicator
+            if voice_client and voice_client.is_connected():
+                latency = voice_client.latency * 1000  # Convert to ms
+                if latency < 50:
+                    quality = "🟢 Excellent"
+                elif latency < 100:
+                    quality = "🟡 Good"
+                elif latency < 200:
+                    quality = "🟠 Fair"
+                else:
+                    quality = "🔴 Poor"
+                
+                embed.add_field(name='Connection', value=f"{quality} ({latency:.0f}ms)", inline=True)
+
             playback_mode = client.playback_modes.get(guild_id)
             if playback_mode:
                 embed.set_footer(text=f'Playback Mode: {playback_mode.value}')
@@ -255,6 +269,45 @@ def create_queue_embed(guild_id: str) -> Embed:
         logger.error(f"Error creating queue embed: {e}")
         return Embed(
             title='📜 Current Queue',
+            description='Error loading queue.',
+            color=0xff0000
+        )
+
+def create_queue_embed_paginated(guild_id: str, page: int = 1, per_page: int = 10) -> Embed:
+    """Create a paginated queue embed"""
+    try:
+        from bot_state import queue_manager
+        
+        songs, total_pages, current_page = queue_manager.get_queue_page(guild_id, page, per_page)
+        
+        def get_source_icon(song):
+            return "🎧" if song.get('source') == 'spotify' else "📺"
+        
+        if songs:
+            # Calculate starting position for this page
+            start_pos = (current_page - 1) * per_page
+            
+            queue_description = '\n'.join(
+                f"{start_pos + idx + 1}. {get_source_icon(song)} **[{song['title']}]({song.get('spotify_url', song.get('webpage_url'))})** — *{song.get('requester', 'Unknown')}*"
+                for idx, song in enumerate(songs)
+            )
+        else:
+            queue_description = 'No songs in the queue.'
+        
+        embed = Embed(
+            title=f'📜 Queue (Page {current_page}/{total_pages if total_pages > 0 else 1})',
+            description=queue_description,
+            color=0x1db954
+        )
+        
+        total_songs = queue_manager.get_queue_length(guild_id)
+        embed.set_footer(text=f"Total songs in queue: {total_songs} | Page {current_page} of {total_pages if total_pages > 0 else 1}")
+        
+        return embed
+    except Exception as e:
+        logger.error(f"Error creating paginated queue embed: {e}")
+        return Embed(
+            title='📜 Queue',
             description='Error loading queue.',
             color=0xff0000
         )

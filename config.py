@@ -66,6 +66,7 @@ FULL_METADATA_OPTS = {
 class PlaybackMode(Enum):
     NORMAL = "Normal"
     REPEAT_ONE = "Repeat"
+    REPEAT_ALL = "Repeat All"
 
 # Spotify Configuration
 SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')

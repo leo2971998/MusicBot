@@ -10,6 +10,8 @@ import unicodedata
 from typing import List, Dict, Optional, Any
 import yt_dlp as youtube_dl
 from config import FAST_SEARCH_OPTS, FULL_METADATA_OPTS
+from utils.retry import retry_async
+from utils.cache import song_cache
 
 logger = logging.getLogger(__name__)
 
@@ -98,8 +100,15 @@ class SearchOptimizer:
         """
         Phase 2: Extract full metadata for selected video
         Called when user selects a specific result
+        Uses retry logic for resilience and caching for performance
         """
-        try:
+        # Check cache first
+        cached_result = song_cache.get(video_url)
+        if cached_result is not None:
+            logger.debug(f"Cache hit for full metadata: {video_url[:50]}")
+            return cached_result
+        
+        async def _extract_metadata():
             start_time = time.time()
             
             loop = asyncio.get_running_loop()
@@ -111,9 +120,19 @@ class SearchOptimizer:
             logger.debug(f"Full metadata extraction completed in {elapsed:.2f}s for URL: {video_url}")
             
             return result
+        
+        try:
+            # Use retry logic with 3 attempts and exponential backoff
+            result = await retry_async(_extract_metadata, max_retries=3, base_delay=1.0)
             
+            # Cache successful results
+            if result:
+                song_cache.set(video_url, result)
+                logger.debug(f"Cached full metadata for: {video_url[:50]}")
+            
+            return result
         except Exception as e:
-            logger.error(f"Error extracting full metadata for URL '{video_url}': {e}")
+            logger.error(f"Error extracting full metadata for URL '{video_url}' after all retries: {e}")
             return None
     
     def _process_fast_result(self, entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
