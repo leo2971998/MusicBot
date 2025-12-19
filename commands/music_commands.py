@@ -534,9 +534,11 @@ async def _play_song(guild_id, song_info, client, player_manager, queue_manager,
         # Start playing
         await player_manager.play_audio_source(guild_id, source, after_playing)
 
-        # Store song duration
+        # Store song duration and start time for progress tracking
+        import time
         duration = song_info.get('duration', 0)
         client.guilds_data[guild_id]['song_duration'] = duration
+        client.guilds_data[guild_id]['song_start_time'] = time.time()  # Track when song started
 
         # Save data
         await data_manager.save_guilds_data(client)

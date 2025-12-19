@@ -1,12 +1,30 @@
 import logging
 import asyncio
 import traceback
+import time
 import discord
 from discord import Embed
 from ui.views import MusicControlView
 from utils.format_utils import format_time
 
 logger = logging.getLogger(__name__)
+
+def create_progress_bar(elapsed: float, duration: float, length: int = 20) -> str:
+    """Create a visual progress bar for song playback"""
+    if duration <= 0:
+        return "▬" * length
+    
+    progress = min(elapsed / duration, 1.0)  # Cap at 1.0
+    filled = int(progress * length)
+    
+    # Create bar with different characters
+    bar = "▓" * filled + "░" * (length - filled)
+    
+    # Add time labels
+    elapsed_str = format_time(int(elapsed))
+    duration_str = format_time(int(duration))
+    
+    return f"{elapsed_str} {bar} {duration_str}"
 
 async def update_stable_message(guild_id: str):
     """Update the stable message with current bot state"""
@@ -216,6 +234,29 @@ def create_now_playing_embed(guild_id: str, guild_data: dict) -> Embed:
                     quality = "🔴 Poor"
                 
                 embed.add_field(name='Connection', value=f"{quality} ({latency:.0f}ms)", inline=True)
+
+            # Add song progress (static bar + dynamic timestamp)
+            start_time = guild_data.get('song_start_time')
+            if start_time and duration > 0:
+                current_time = time.time()
+                elapsed = current_time - start_time
+                
+                # Only show progress if not past duration (handles paused state)
+                if elapsed < duration:
+                    # Static progress bar (updates only when embed refreshes)
+                    progress_bar_visual = create_progress_bar(elapsed, duration)
+                    
+                    # Dynamic Discord timestamp (updates automatically client-side)
+                    end_timestamp = int(start_time + duration)
+                    
+                    # Show pause indicator if paused
+                    status_icon = "⏸️" if voice_client.is_paused() else "▶️"
+                    
+                    embed.add_field(
+                        name=f'{status_icon} Progress',
+                        value=f"`{progress_bar_visual}`\nEnds <t:{end_timestamp}:R>",
+                        inline=False
+                    )
 
             playback_mode = client.playback_modes.get(guild_id)
             if playback_mode:
