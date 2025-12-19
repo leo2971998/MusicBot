@@ -87,6 +87,9 @@ class ModalSearchResultSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         """Handle search result selection"""
         try:
+            # IMMEDIATELY defer to prevent timeout (gives us 15 minutes to respond)
+            await interaction.response.defer(thinking=True, ephemeral=True)
+            
             selected_index = int(self.values[0])
             selected_result = self.search_results[selected_index]
             
@@ -94,7 +97,7 @@ class ModalSearchResultSelect(discord.ui.Select):
             self.view.selected_index = selected_index
             self.view.selection_made = True
             
-            # Process the selected song
+            # Process the selected song (this is the slow part)
             from commands.music_commands import process_play_request
             from bot_state import client, queue_manager, player_manager, data_manager
             
@@ -111,9 +114,9 @@ class ModalSearchResultSelect(discord.ui.Select):
                 play_next=self.play_next
             )
             
-            # Send response
+            # Use followup instead of response (since we deferred)
             action_text = "Play Next" if self.play_next else "Add Song"
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"🎵 {action_text} - Selected: **{selected_result.get('title', 'Unknown')}**\n{response_message}",
                 ephemeral=True
             )
@@ -145,10 +148,15 @@ class ModalSearchResultSelect(discord.ui.Select):
                 
         except Exception as e:
             logger.error(f"Error in modal search result selection: {e}")
-            await interaction.response.send_message(
-                "❌ An error occurred while processing your selection.",
-                ephemeral=True
-            )
+            # Use followup since we already deferred (or try both for safety)
+            try:
+                await interaction.followup.send(
+                    "❌ An error occurred while processing your selection.",
+                    ephemeral=True
+                )
+            except:
+                # If followup fails, interaction might be completely dead
+                logger.error("Failed to send error message via followup")
 
 class AddSongModal(Modal):
     def __init__(self, play_next: bool = False, preview_mode: bool = True):
@@ -285,8 +293,14 @@ class AddSongModal(Modal):
                     "❌ An error occurred while processing your request.",
                     ephemeral=True
                 )
-        except Exception:
-            pass
+            else:
+                # Response already sent/deferred, use followup
+                await interaction.followup.send(
+                    "❌ An error occurred while processing your request.",
+                    ephemeral=True
+                )
+        except Exception as e:
+            logger.error(f"Failed to send error message: {e}")
 
 class RemoveSongModal(Modal):
     def __init__(self):
@@ -343,8 +357,13 @@ class RemoveSongModal(Modal):
                     "❌ An error occurred while processing your request.",
                     ephemeral=True
                 )
-        except Exception:
-            pass
+            else:
+                await interaction.followup.send(
+                    "❌ An error occurred while processing your request.",
+                    ephemeral=True
+                )
+        except Exception as e:
+            logger.error(f"Failed to send error message: {e}")
 
 class MoveSongModal(Modal):
     """Modal for moving a song from one position to another in the queue"""
@@ -406,8 +425,13 @@ class MoveSongModal(Modal):
                     "❌ An error occurred while processing your request.",
                     ephemeral=True
                 )
-        except Exception:
-            pass
+            else:
+                await interaction.followup.send(
+                    "❌ An error occurred while processing your request.",
+                    ephemeral=True
+                )
+        except Exception as e:
+            logger.error(f"Failed to send error message: {e}")
 
 class RemoveRangeModal(Modal):
     """Enhanced remove modal - supports single position, range, or comma-separated positions"""
@@ -492,5 +516,10 @@ class RemoveRangeModal(Modal):
                     "❌ An error occurred while processing your request.",
                     ephemeral=True
                 )
-        except Exception:
-            pass
+            else:
+                await interaction.followup.send(
+                    "❌ An error occurred while processing your request.",
+                    ephemeral=True
+                )
+        except Exception as e:
+            logger.error(f"Failed to send error message: {e}")
