@@ -49,7 +49,7 @@ class VoteManager:
         """
         if 'vote_skip' not in guild_data:
             guild_data['vote_skip'] = {
-                'votes': set(),
+                'votes': [],  # Use list instead of set for JSON serialization
                 'song_id': None  # Track which song the votes are for
             }
         
@@ -58,7 +58,7 @@ class VoteManager:
             return False
             
         # Add the vote
-        guild_data['vote_skip']['votes'].add(user_id)
+        guild_data['vote_skip']['votes'].append(user_id)
         logger.debug(f"Added vote from user {user_id}, total votes: {len(guild_data['vote_skip']['votes'])}")
         return True
     
@@ -84,7 +84,7 @@ class VoteManager:
         Optionally track which song the votes are for.
         """
         guild_data['vote_skip'] = {
-            'votes': set(),
+            'votes': [],  # Use list instead of set for JSON serialization
             'song_id': song_id
         }
         logger.debug(f"Reset votes for song {song_id}")
@@ -96,7 +96,7 @@ class VoteManager:
         Returns dict with current votes, required votes, and percentage.
         """
         if 'vote_skip' not in guild_data:
-            guild_data['vote_skip'] = {'votes': set(), 'song_id': None}
+            guild_data['vote_skip'] = {'votes': [], 'song_id': None}  # Use list instead of set for JSON serialization
             
         current_votes = len(guild_data['vote_skip']['votes'])
         required_votes = VoteManager.get_required_votes(voice_channel)

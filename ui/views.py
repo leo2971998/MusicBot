@@ -13,7 +13,12 @@ class PlaybackModeSelect(discord.ui.Select):
             discord.SelectOption(label='Repeat Song', emoji='🔂', value='repeat_one', description='Repeat current song'),
             discord.SelectOption(label='Repeat Queue', emoji='🔄', value='repeat_all', description='Loop entire queue'),
         ]
-        super().__init__(placeholder='🎵 Playback Mode', options=options, row=3)
+        super().__init__(
+            placeholder='🎵 Playback Mode',
+            options=options,
+            row=3,
+            custom_id='playback_mode_select'  # Required for persistent view
+        )
 
     async def callback(self, interaction: discord.Interaction):
         from bot_state import client, queue_manager
@@ -251,7 +256,7 @@ class MusicControlView(View):
             return False
 
     # Row 0: Playback controls (emoji-only for cleaner look)
-    @discord.ui.button(label='⏸️', style=ButtonStyle.primary, row=0)
+    @discord.ui.button(label='⏸️', style=ButtonStyle.primary, row=0, custom_id='pause_button')
     async def pause_button(self, interaction: discord.Interaction, button: Button):
         try:
             # Import here to avoid circular imports
@@ -278,7 +283,7 @@ class MusicControlView(View):
             logger.exception("Error in pause_button")
             raise  # Re-raise to trigger on_error
 
-    @discord.ui.button(label='▶️', style=ButtonStyle.primary, row=0)
+    @discord.ui.button(label='▶️', style=ButtonStyle.primary, row=0, custom_id='resume_button')
     async def resume_button(self, interaction: discord.Interaction, button: Button):
         try:
             from bot_state import player_manager
@@ -304,7 +309,7 @@ class MusicControlView(View):
             logger.exception("Error in resume_button")
             raise
 
-    @discord.ui.button(label='⏭️', style=ButtonStyle.primary, row=0)
+    @discord.ui.button(label='⏭️', style=ButtonStyle.primary, row=0, custom_id='skip_button')
     async def skip_button(self, interaction: discord.Interaction, button: Button):
         try:
             from bot_state import player_manager, client
@@ -369,7 +374,7 @@ class MusicControlView(View):
             logger.exception("Error in skip_button")
             raise
 
-    @discord.ui.button(label='⏹️', style=ButtonStyle.danger, row=0)
+    @discord.ui.button(label='⏹️', style=ButtonStyle.danger, row=0, custom_id='stop_button')
     async def stop_button(self, interaction: discord.Interaction, button: Button):
         try:
             from bot_state import player_manager, client, queue_manager
@@ -391,7 +396,7 @@ class MusicControlView(View):
             raise
 
     # Row 1: Queue management
-    @discord.ui.button(label='🔀', style=ButtonStyle.secondary, row=1)
+    @discord.ui.button(label='🔀', style=ButtonStyle.secondary, row=1, custom_id='shuffle_button')
     async def shuffle_button(self, interaction: discord.Interaction, button: Button):
         try:
             from bot_state import queue_manager
@@ -413,7 +418,7 @@ class MusicControlView(View):
             logger.exception("Error in shuffle_button")
             raise
 
-    @discord.ui.button(label='🗑️ Clear', style=ButtonStyle.danger, row=1)
+    @discord.ui.button(label='🗑️ Clear', style=ButtonStyle.danger, row=1, custom_id='clear_queue_button')
     async def clear_queue_button(self, interaction: discord.Interaction, button: Button):
         try:
             from bot_state import queue_manager
@@ -435,7 +440,7 @@ class MusicControlView(View):
             logger.exception("Error in clear_queue_button")
             raise
 
-    @discord.ui.button(label='↕️ Move', style=ButtonStyle.secondary, row=1)
+    @discord.ui.button(label='↕️ Move', style=ButtonStyle.secondary, row=1, custom_id='move_button')
     async def move_button(self, interaction: discord.Interaction, button: Button):
         try:
             from ui.modals import MoveSongModal
@@ -447,7 +452,7 @@ class MusicControlView(View):
             logger.exception("Error in move_button")
             raise
 
-    @discord.ui.button(label='❌ Remove', style=ButtonStyle.danger, row=1)
+    @discord.ui.button(label='❌ Remove', style=ButtonStyle.danger, row=1, custom_id='remove_button')
     async def remove_button(self, interaction: discord.Interaction, button: Button):
         try:
             from ui.modals import RemoveRangeModal
@@ -460,7 +465,7 @@ class MusicControlView(View):
             raise
 
     # Row 2: Add songs
-    @discord.ui.button(label='🎵 Add Song', style=ButtonStyle.success, row=2)
+    @discord.ui.button(label='🎵 Add Song', style=ButtonStyle.success, row=2, custom_id='add_song_button')
     async def add_song_button(self, interaction: discord.Interaction, button: Button):
         try:
             from ui.modals import AddSongModal
@@ -472,7 +477,7 @@ class MusicControlView(View):
             logger.exception("Error in add_song_button")
             raise
 
-    @discord.ui.button(label='➕ Play Next', style=ButtonStyle.success, row=2)
+    @discord.ui.button(label='➕ Play Next', style=ButtonStyle.success, row=2, custom_id='add_next_song_button')
     async def add_next_song_button(self, interaction: discord.Interaction, button: Button):
         try:
             from ui.modals import AddSongModal
@@ -484,7 +489,7 @@ class MusicControlView(View):
             logger.exception("Error in add_next_song_button")
             raise
 
-    @discord.ui.button(label='📋 View Queue', style=ButtonStyle.primary, row=2)
+    @discord.ui.button(label='📋 View Queue', style=ButtonStyle.primary, row=2, custom_id='view_queue_button')
     async def view_queue_button(self, interaction: discord.Interaction, button: Button):
         try:
             from bot_state import queue_manager
