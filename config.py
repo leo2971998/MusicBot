@@ -10,15 +10,15 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 DATA_FILE = 'guilds_data.json'
 MUSIC_CHANNEL_NAME = 'leo-song-requests'
 
-# FFmpeg options
+# FFmpeg options - Enhanced for better streaming stability
 FFMPEG_OPTIONS = {
-    'before_options': ' -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn'
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin',
+    'options': '-vn -loglevel warning'
 }
 
-# YT-DLP options
+# YT-DLP options - Updated for better YouTube compatibility
 YTDL_FORMAT_OPTS = {
-    'format': 'bestaudio/best',
+    'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
     'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
     'restrictfilenames': True,
     'noplaylist': True,
@@ -27,13 +27,18 @@ YTDL_FORMAT_OPTS = {
     'logtostderr': False,
     'quiet': True,
     'no_warnings': True,
-    'default_search': 'auto',
+    'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
+    # Use different YouTube client to avoid 403 errors
+    'extractor_args': {'youtube': {'player_client': ['android_music', 'android', 'web']}},
+    'http_headers': {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    },
 }
 
 # Fast search options for Phase 1 (basic search with minimal metadata)
 FAST_SEARCH_OPTS = {
-    'format': 'bestaudio/best',
+    'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
     'quiet': True,
     'no_warnings': True,
     'extract_flat': True,  # Don't extract full metadata
@@ -44,13 +49,18 @@ FAST_SEARCH_OPTS = {
     'writeautomaticsub': False,
     'ignoreerrors': True,
     'no_check_certificate': True,
-    'default_search': 'auto',
+    'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
+    # Use different YouTube client to avoid 403 errors
+    'extractor_args': {'youtube': {'player_client': ['android_music', 'android', 'web']}},
+    'http_headers': {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    },
 }
 
 # Full metadata options for Phase 2 (when user selects a song)
 FULL_METADATA_OPTS = {
-    'format': 'bestaudio/best',
+    'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
     'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
     'restrictfilenames': True,
     'noplaylist': True,
@@ -59,8 +69,13 @@ FULL_METADATA_OPTS = {
     'logtostderr': False,
     'quiet': True,
     'no_warnings': True,
-    'default_search': 'auto',
+    'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
+    # Use different YouTube client to avoid 403 errors
+    'extractor_args': {'youtube': {'player_client': ['android_music', 'android', 'web']}},
+    'http_headers': {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    },
 }
 
 class PlaybackMode(Enum):
