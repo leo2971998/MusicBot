@@ -470,7 +470,8 @@ class MusicControlView(View):
         try:
             from ui.modals import AddSongModal
             logger.debug(f"Add song button clicked in guild {interaction.guild_id} by user {interaction.user}")
-            modal = AddSongModal(preview_mode=True)
+            # preview_mode=False means auto-select top result instead of showing dropdown
+            modal = AddSongModal(preview_mode=False)
             await interaction.response.send_modal(modal)
             logger.debug(f"Successfully sent modal for add song in guild {interaction.guild_id}")
         except Exception:
@@ -482,7 +483,8 @@ class MusicControlView(View):
         try:
             from ui.modals import AddSongModal
             logger.debug(f"Play next button clicked in guild {interaction.guild_id} by user {interaction.user}")
-            modal = AddSongModal(play_next=True)
+            # preview_mode=False means auto-select top result instead of showing dropdown
+            modal = AddSongModal(play_next=True, preview_mode=False)
             await interaction.response.send_modal(modal)
             logger.debug(f"Successfully sent modal for play next in guild {interaction.guild_id}")
         except Exception:

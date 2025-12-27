@@ -159,11 +159,8 @@ class ModalSearchResultSelect(discord.ui.Select):
                 logger.error("Failed to send error message via followup")
 
 class AddSongModal(Modal):
-    def __init__(self, play_next: bool = False, preview_mode: bool = True):
-        if play_next:
-            title = "Play Next"
-        else:
-            title = "Add Song (Preview)" if preview_mode else "Add Song (Normal)"
+    def __init__(self, play_next: bool = False, preview_mode: bool = False):
+        title = "Play Next" if play_next else "Add Song"
         super().__init__(title=title)
         self.play_next = play_next
         self.preview_mode = preview_mode
