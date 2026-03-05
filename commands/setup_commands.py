@@ -60,7 +60,7 @@ def setup_admin_commands(client, data_manager):
             from ui.embeds import update_stable_message
             from utils.message_utils import clear_channel_messages
 
-            await update_stable_message(guild_id)
+            await update_stable_message(guild_id, force=True)
             await clear_channel_messages(channel, stable_message.id)
 
         except Exception as e:

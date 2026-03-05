@@ -6,9 +6,7 @@ module.exports = {
     cwd: '/home/leo29798/MusicBot',
     env: {
       PYTHONUNBUFFERED: '1', // Better for real-time logging
-      NODE_ENV: 'production',
-      WEB_UI_HOST: '0.0.0.0',
-      WEB_UI_PORT: '8080'
+      NODE_ENV: 'production'
     },
     error_file: './logs/err.log',
     out_file: './logs/out.log',

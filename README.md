@@ -23,13 +23,11 @@ Below is a screenshot demonstrating the MusicBot’s UI with button controls:
 
 ## Button-Based Usage
 
-In addition to traditional text commands, MusicBot offers interactive buttons. Once a song is playing, the bot will display a set of buttons for quick control:
+In addition to traditional text commands, MusicBot offers interactive buttons. The stable panel is compact and split into focused controls:
 
-- **Play / Resume:** Resumes music if paused.  
-- **Pause:** Pauses current playback.  
-- **Skip:** Skips to the next song in the queue.  
-- **Stop:** Stops the current song and clears the queue.  
-- **Queue:** Displays the list of songs currently in the queue.  
+- **Main playback row:** `Play/Pause`, `Skip`, `Stop`, `Queue`  
+- **Manage entry:** one `Manage` button for non-core actions  
+- **Manage menu:** `Add`, `Play Next`, playback mode, and queue editing actions (`Shuffle`, `Clear`, `Move`, `Remove`)  
 
 Simply click the corresponding button in the bot’s message to perform that action—no need to type commands!
 
@@ -91,17 +89,6 @@ If you prefer text commands, or if button-based interactions are unavailable for
 
    Once the bot is running, invite it to your server using the OAuth2 link provided in the Discord Developer Portal.
 
-## Web UI
-A basic Flask-based web interface is included. It provides a small web page for managing playback and JSON endpoints for viewing the queue and adding new songs.
-
-Start the bot normally, and the web UI will be available at `http://localhost:8080`.
-
-Open `http://localhost:8080/?guild_id=YOUR_GUILD_ID` in a browser to view the queue and add songs.
-- `GET /queue/<guild_id>` – Returns the current queue for the guild.
-- `POST /play` – JSON endpoint to add a song. Requires `guild_id` and `query` fields.
-
-You can customize the host and port using the `WEB_UI_HOST` and `WEB_UI_PORT` environment variables.
-
 ### Running with pm2
 
 If you prefer to keep the bot running with [pm2](https://pm2.keymetrics.io/),
@@ -117,9 +104,7 @@ module.exports = {
     cwd: '/home/leo29798/MusicBot',
     env: {
       PYTHONUNBUFFERED: '1',
-      NODE_ENV: 'production',
-      WEB_UI_HOST: '0.0.0.0',
-      WEB_UI_PORT: '8080'
+      NODE_ENV: 'production'
     },
     error_file: './logs/err.log',
     out_file: './logs/out.log',
@@ -134,9 +119,6 @@ module.exports = {
   }]
 };
 ```
-
-This sample sets `WEB_UI_HOST` and `WEB_UI_PORT` so you can change the address
-where the Web UI is served.
 
 Start the bot under pm2 with:
 

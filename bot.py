@@ -109,6 +109,8 @@ async def restore_guild_states():
         client.guilds_data.pop(gid, None)
         client.playback_modes.pop(gid, None)
         queue_manager.cleanup_guild(gid)
+        from ui.embeds import forget_guild_ui
+        forget_guild_ui(gid)
 
     if guilds_to_remove:
         await data_manager.save_guilds_data(client)
@@ -152,7 +154,7 @@ async def restore_stable_message(guild_id: str, guild_data: dict, channel: disco
         await asyncio.sleep(0.5)
         
         # Force update the message with proper embeds and interactive view
-        await update_stable_message(guild_id)
+        await update_stable_message(guild_id, force=True)
         logger.debug(f'Updated stable message {stable_message.id} with embeds and view in guild {guild_id}')
         
         # Ensure guild data is saved with the updated message info
@@ -230,13 +232,6 @@ def load_extensions():
 
 def main():
     load_extensions()
-    # Start optional web UI
-    try:
-        from web_ui import start_web_ui
-        start_web_ui()
-    except Exception:
-        logger.exception('Failed to start web UI')
-
     token = TOKEN or os.getenv('DISCORD_TOKEN')
     if not token:
         raise RuntimeError('DISCORD_TOKEN is not set')
@@ -268,8 +263,6 @@ def main():
             await client.close()
 
     # Register shutdown handler
-    import signal
-
     def signal_handler(signum, frame):
         logger.info(f'Received signal {signum}, initiating shutdown...')
         asyncio.run_coroutine_threadsafe(shutdown(), loop)
