@@ -26,8 +26,8 @@ Below is a screenshot demonstrating the MusicBot’s UI with button controls:
 In addition to traditional text commands, MusicBot offers interactive buttons. The stable panel is compact and split into focused controls:
 
 - **Main playback row:** `Play/Pause`, `Skip`, `Stop`, `Queue`  
-- **Manage entry:** one `Manage` button for non-core actions  
-- **Manage menu:** `Add`, `Play Next`, playback mode, and queue editing actions (`Shuffle`, `Clear`, `Move`, `Remove`)  
+- **Queue actions row:** `Add`, `Play Next`, `Move`, `Remove`  
+- **Utility row:** `Shuffle`, `Clear`, and playback mode select  
 
 Simply click the corresponding button in the bot’s message to perform that action—no need to type commands!
 

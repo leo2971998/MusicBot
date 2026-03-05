@@ -271,7 +271,7 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
 
     try:
-        client.run(token)
+        client.run(token, log_handler=None)
     except KeyboardInterrupt:
         logger.info('Bot stopped by keyboard interrupt')
     except Exception:

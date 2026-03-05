@@ -227,8 +227,11 @@ async def process_play_request(user, guild, channel, link, client, queue_manager
             )
             if not voice_client:
                 return "❌ Could not connect to voice channel."
-        except discord.errors.ConnectionClosed:
-            return "❌ Voice connection was closed. Please try again."
+        except discord.errors.ConnectionClosed as e:
+            logger.warning(
+                f"Voice connection closed during connect in guild {guild_id}: code={getattr(e, 'code', 'unknown')}"
+            )
+            return "❌ Voice connection handshake failed. Please retry in a few seconds."
         except discord.errors.Forbidden:
             return "❌ I don't have permission to join your voice channel."
         except Exception as e:

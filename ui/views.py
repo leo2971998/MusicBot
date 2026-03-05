@@ -187,70 +187,6 @@ class QueuePaginationView(View):
             )
 
 
-class QueueManagementView(View):
-    """Ephemeral queue-management controls shown behind the Manage button."""
-
-    def __init__(self, guild_id: str):
-        super().__init__(timeout=120)
-        self.guild_id = guild_id
-        self.add_item(PlaybackModeSelect(row=2))
-
-    async def _safe_response(self, interaction: discord.Interaction, message: str):
-        if interaction.response.is_done():
-            await interaction.followup.send(message, ephemeral=True)
-        else:
-            await interaction.response.send_message(message, ephemeral=True)
-
-    @discord.ui.button(label='➕ Add', style=ButtonStyle.success, row=0)
-    async def add_song_button(self, interaction: discord.Interaction, button: Button):
-        from ui.modals import AddSongModal
-
-        await interaction.response.send_modal(AddSongModal(preview_mode=False))
-
-    @discord.ui.button(label='⏩ Play Next', style=ButtonStyle.success, row=0)
-    async def add_next_song_button(self, interaction: discord.Interaction, button: Button):
-        from ui.modals import AddSongModal
-
-        await interaction.response.send_modal(AddSongModal(play_next=True, preview_mode=False))
-
-    @discord.ui.button(label='🔀 Shuffle', style=ButtonStyle.secondary, row=0)
-    async def shuffle_button(self, interaction: discord.Interaction, button: Button):
-        from bot_state import queue_manager
-        from ui.embeds import update_stable_message
-
-        if queue_manager.shuffle_queue(self.guild_id):
-            await self._safe_response(interaction, '🔀 Queue shuffled.')
-            await update_stable_message(self.guild_id)
-            return
-
-        await self._safe_response(interaction, '❌ The queue is empty.')
-
-    @discord.ui.button(label='🗑 Clear', style=ButtonStyle.danger, row=1)
-    async def clear_queue_button(self, interaction: discord.Interaction, button: Button):
-        from bot_state import queue_manager
-        from ui.embeds import update_stable_message
-
-        removed = queue_manager.clear_queue(self.guild_id)
-        if removed > 0:
-            await self._safe_response(interaction, f'🗑 Cleared {removed} songs from the queue.')
-            await update_stable_message(self.guild_id)
-            return
-
-        await self._safe_response(interaction, '❌ The queue is already empty.')
-
-    @discord.ui.button(label='↕ Move', style=ButtonStyle.secondary, row=1)
-    async def move_button(self, interaction: discord.Interaction, button: Button):
-        from ui.modals import MoveSongModal
-
-        await interaction.response.send_modal(MoveSongModal())
-
-    @discord.ui.button(label='❌ Remove', style=ButtonStyle.danger, row=1)
-    async def remove_button(self, interaction: discord.Interaction, button: Button):
-        from ui.modals import RemoveRangeModal
-
-        await interaction.response.send_modal(RemoveRangeModal())
-
-
 class MusicControlView(View):
     """Compact persistent music control view for the stable panel."""
 
@@ -315,12 +251,49 @@ class MusicControlView(View):
         )
 
         self._add_button(
-            label='⚙ Manage',
+            label='➕ Add',
+            style=ButtonStyle.success,
+            row=1,
+            custom_id='add_song_button',
+            callback=self.add_song_button,
+        )
+        self._add_button(
+            label='⏩ Play Next',
+            style=ButtonStyle.success,
+            row=1,
+            custom_id='add_next_song_button',
+            callback=self.add_next_song_button,
+        )
+        self._add_button(
+            label='↕ Move',
             style=ButtonStyle.secondary,
             row=1,
-            custom_id='manage_queue_button',
-            callback=self.manage_queue_button,
+            custom_id='move_song_button',
+            callback=self.move_button,
         )
+        self._add_button(
+            label='❌ Remove',
+            style=ButtonStyle.danger,
+            row=1,
+            custom_id='remove_song_button',
+            callback=self.remove_button,
+        )
+
+        self._add_button(
+            label='🔀 Shuffle',
+            style=ButtonStyle.secondary,
+            row=2,
+            custom_id='shuffle_button',
+            callback=self.shuffle_button,
+        )
+        self._add_button(
+            label='🗑 Clear',
+            style=ButtonStyle.danger,
+            row=2,
+            custom_id='clear_queue_button',
+            callback=self.clear_queue_button,
+        )
+        self.add_item(PlaybackModeSelect(row=2, custom_id='playback_mode_select'))
 
     def _add_button(self, *, label: str, style: ButtonStyle, row: int, custom_id: str, callback, disabled: bool = False):
         button = Button(
@@ -488,19 +461,47 @@ class MusicControlView(View):
         else:
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    async def manage_queue_button(self, interaction: discord.Interaction):
+    async def add_song_button(self, interaction: discord.Interaction):
+        from ui.modals import AddSongModal
+
+        await interaction.response.send_modal(AddSongModal(preview_mode=False))
+
+    async def add_next_song_button(self, interaction: discord.Interaction):
+        from ui.modals import AddSongModal
+
+        await interaction.response.send_modal(AddSongModal(play_next=True, preview_mode=False))
+
+    async def move_button(self, interaction: discord.Interaction):
+        from ui.modals import MoveSongModal
+
+        await interaction.response.send_modal(MoveSongModal())
+
+    async def remove_button(self, interaction: discord.Interaction):
+        from ui.modals import RemoveRangeModal
+
+        await interaction.response.send_modal(RemoveRangeModal())
+
+    async def shuffle_button(self, interaction: discord.Interaction):
         from bot_state import queue_manager
+        from ui.embeds import update_stable_message
 
         guild_id = self._resolve_guild_id(interaction)
-        queue_length = queue_manager.get_queue_length(guild_id)
-        manage_view = QueueManagementView(guild_id)
-        message = (
-            '⚙ Queue Manager\n'
-            'Use this menu for queue edits, add/play-next, and playback mode.\n'
-            f'Queue: **{queue_length} songs**'
-        )
+        if queue_manager.shuffle_queue(guild_id):
+            await self._safe_interaction_response(interaction, '🔀 Queue shuffled.')
+            await update_stable_message(guild_id)
+            return
 
-        if interaction.response.is_done():
-            await interaction.followup.send(message, view=manage_view, ephemeral=True)
-        else:
-            await interaction.response.send_message(message, view=manage_view, ephemeral=True)
+        await self._safe_interaction_response(interaction, '❌ The queue is empty.')
+
+    async def clear_queue_button(self, interaction: discord.Interaction):
+        from bot_state import queue_manager
+        from ui.embeds import update_stable_message
+
+        guild_id = self._resolve_guild_id(interaction)
+        removed = queue_manager.clear_queue(guild_id)
+        if removed > 0:
+            await self._safe_interaction_response(interaction, f'🗑 Cleared {removed} songs from the queue.')
+            await update_stable_message(guild_id)
+            return
+
+        await self._safe_interaction_response(interaction, '❌ The queue is already empty.')
