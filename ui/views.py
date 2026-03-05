@@ -293,7 +293,7 @@ class MusicControlView(View):
             custom_id='clear_queue_button',
             callback=self.clear_queue_button,
         )
-        self.add_item(PlaybackModeSelect(row=2, custom_id='playback_mode_select'))
+        self.add_item(PlaybackModeSelect(row=3, custom_id='playback_mode_select'))
 
     def _add_button(self, *, label: str, style: ButtonStyle, row: int, custom_id: str, callback, disabled: bool = False):
         button = Button(
