@@ -75,14 +75,15 @@ class PlayerManager:
                         return voice_client
 
                 # Connect with guarded retries to avoid transient handshake failures.
-                for attempt in range(1, 4):
+                for attempt in range(1, 5):
                     try:
                         logger.info(
-                            f"Connecting to voice channel {user_voice_channel} in guild {guild_id} (attempt {attempt}/3)"
+                            f"Connecting to voice channel {user_voice_channel} in guild {guild_id} (attempt {attempt}/4)"
                         )
                         voice_client = await user_voice_channel.connect(
                             timeout=20.0,
-                            reconnect=True,
+                            reconnect=False,
+                            self_deaf=True,
                         )
 
                         for _ in range(10):
@@ -100,8 +101,9 @@ class PlayerManager:
                         return voice_client
 
                     except discord.errors.ConnectionClosed as e:
+                        close_code = getattr(e, "code", None)
                         logger.warning(
-                            f"Voice connection closed in guild {guild_id} (attempt {attempt}/3): {e}"
+                            f"Voice connection closed in guild {guild_id} (attempt {attempt}/4, code={close_code}): {e}"
                         )
                         self.voice_clients.pop(guild_id, None)
                         stale_client = user_voice_channel.guild.voice_client
@@ -112,23 +114,33 @@ class PlayerManager:
                                 logger.debug(
                                     f"Ignoring stale voice disconnect error in guild {guild_id}"
                                 )
-                        if attempt < 3:
-                            await asyncio.sleep(1.5 * attempt)
+
+                        # Force a clean server-side voice state reset before retry.
+                        try:
+                            await user_voice_channel.guild.change_voice_state(channel=None)
+                        except Exception:
+                            logger.debug(
+                                f"Ignoring guild voice-state reset error in guild {guild_id}"
+                            )
+
+                        if attempt < 4:
+                            backoff = 2.5 * attempt if close_code == 4017 else 1.5 * attempt
+                            await asyncio.sleep(backoff)
                             continue
                         raise
                     except discord.ClientException as e:
                         logger.error(f"ClientException in guild {guild_id}: {e}")
                         self.voice_clients.pop(guild_id, None)
-                        if attempt < 3:
+                        if attempt < 4:
                             await asyncio.sleep(1.0)
                             continue
                         raise
                     except Exception as e:
                         logger.error(
-                            f"Unexpected connect error in guild {guild_id} (attempt {attempt}/3): {e}"
+                            f"Unexpected connect error in guild {guild_id} (attempt {attempt}/4): {e}"
                         )
                         self.voice_clients.pop(guild_id, None)
-                        if attempt < 3:
+                        if attempt < 4:
                             await asyncio.sleep(1.0)
                             continue
                         raise
