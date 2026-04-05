@@ -226,10 +226,9 @@ async def on_message(message):
         await client.process_commands(message)
 
 def load_extensions():
-    from commands import dailyroutine_commands, music_commands, setup_commands
+    from commands import music_commands, setup_commands
     music_commands.setup_music_commands(client, queue_manager, player_manager, data_manager)
     setup_commands.setup_admin_commands(client, data_manager)
-    dailyroutine_commands.setup_dailyroutine_commands(client)
 
 def main():
     load_extensions()

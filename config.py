@@ -98,15 +98,3 @@ IDLE_DISCONNECT_DELAY = int(os.getenv("IDLE_DISCONNECT_DELAY", "120"))
 HEALTH_CHECK_INTERVAL = int(os.getenv("HEALTH_CHECK_INTERVAL", "300"))  # 5 minutes
 MEMORY_CLEANUP_INTERVAL = int(os.getenv("MEMORY_CLEANUP_INTERVAL", "600"))  # 10 minutes
 MAX_GUILD_DATA_AGE = int(os.getenv("MAX_GUILD_DATA_AGE", "86400"))  # 24 hours
-
-# DailyRoutine integration
-DAILY_ROUTINE_BASE_URL = os.getenv(
-    "DAILY_ROUTINE_BASE_URL",
-    "https://daily-routine-ashen-pi.vercel.app",
-).rstrip("/")
-DAILY_ROUTINE_API_TOKEN = os.getenv("DAILY_ROUTINE_API_TOKEN", "").strip()
-DAILY_ROUTINE_REQUEST_TIMEOUT = int(os.getenv("DAILY_ROUTINE_REQUEST_TIMEOUT", "30"))
-DAILY_ROUTINE_EXECUTE_BY_DEFAULT = (
-    os.getenv("DAILY_ROUTINE_EXECUTE_BY_DEFAULT", "false").strip().lower()
-    in {"1", "true", "yes", "on"}
-)
