@@ -16,67 +16,65 @@ FFMPEG_OPTIONS = {
     'options': '-vn -loglevel warning'
 }
 
-# YT-DLP options - Updated for better YouTube compatibility
-YTDL_FORMAT_OPTS = {
-    'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
-    'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
-    'restrictfilenames': True,
-    'noplaylist': True,
-    'nocheckcertificate': True,
-    'ignoreerrors': False,
-    'logtostderr': False,
-    'quiet': True,
-    'no_warnings': True,
-    'default_search': 'ytsearch',
-    'source_address': '0.0.0.0',
-    # Use different YouTube client to avoid 403 errors
-    'extractor_args': {'youtube': {'player_client': ['android_music', 'android', 'web']}},
-    'http_headers': {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    },
+YTDL_HTTP_HEADERS = {
+    'User-Agent': (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) '
+        'Chrome/120.0.0.0 Safari/537.36'
+    ),
 }
+
+YTDL_EXTRACTOR_ARGS = {
+    'youtube': {
+        'player_client': ['android_music', 'android', 'web'],
+    }
+}
+
+
+def _build_ytdl_options(*, flat: bool = False) -> dict:
+    options = {
+        'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
+        'quiet': True,
+        'no_warnings': True,
+        'default_search': 'ytsearch',
+        'source_address': '0.0.0.0',
+        'nocheckcertificate': True,
+        'extractor_retries': 3,
+        'retries': 3,
+        'extractor_args': YTDL_EXTRACTOR_ARGS,
+        'http_headers': YTDL_HTTP_HEADERS,
+    }
+
+    if flat:
+        options.update({
+            'extract_flat': True,
+            'skip_download': True,
+            'writeinfojson': False,
+            'writethumbnail': False,
+            'writesubtitles': False,
+            'writeautomaticsub': False,
+            'ignoreerrors': True,
+        })
+    else:
+        options.update({
+            'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
+            'restrictfilenames': True,
+            'noplaylist': True,
+            'ignoreerrors': False,
+            'logtostderr': False,
+        })
+
+    return options
+
+
+# YT-DLP options - updated for better YouTube compatibility
+YTDL_FORMAT_OPTS = _build_ytdl_options()
 
 # Fast search options for Phase 1 (basic search with minimal metadata)
-FAST_SEARCH_OPTS = {
-    'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
-    'quiet': True,
-    'no_warnings': True,
-    'extract_flat': True,  # Don't extract full metadata
-    'skip_download': True,
-    'writeinfojson': False,
-    'writethumbnail': False,
-    'writesubtitles': False,
-    'writeautomaticsub': False,
-    'ignoreerrors': True,
-    'no_check_certificate': True,
-    'default_search': 'ytsearch',
-    'source_address': '0.0.0.0',
-    # Use different YouTube client to avoid 403 errors
-    'extractor_args': {'youtube': {'player_client': ['android_music', 'android', 'web']}},
-    'http_headers': {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    },
-}
+FAST_SEARCH_OPTS = _build_ytdl_options(flat=True)
 
 # Full metadata options for Phase 2 (when user selects a song)
-FULL_METADATA_OPTS = {
-    'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
-    'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
-    'restrictfilenames': True,
-    'noplaylist': True,
-    'nocheckcertificate': True,
-    'ignoreerrors': False,
-    'logtostderr': False,
-    'quiet': True,
-    'no_warnings': True,
-    'default_search': 'ytsearch',
-    'source_address': '0.0.0.0',
-    # Use different YouTube client to avoid 403 errors
-    'extractor_args': {'youtube': {'player_client': ['android_music', 'android', 'web']}},
-    'http_headers': {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    },
-}
+FULL_METADATA_OPTS = _build_ytdl_options()
 
 class PlaybackMode(Enum):
     NORMAL = "Normal"
