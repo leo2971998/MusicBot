@@ -13,10 +13,13 @@ from utils.format_utils import format_time
 logger = logging.getLogger(__name__)
 
 UI_REFRESH_DEBOUNCE_SECONDS = 0.5
+STABLE_PANEL_BOOTSTRAP_CONTENT = '🎶 **Music Bot UI Initialized** 🎶'
+PANEL_HISTORY_SCAN_LIMIT = 100
 
 _refresh_tasks: Dict[str, asyncio.Task] = {}
 _persistent_views: Dict[str, MusicControlView] = {}
 _registered_view_message_ids: Dict[str, int] = {}
+_orphan_panel_cleanup_completed: set[str] = set()
 
 
 def create_progress_bar(elapsed: float, duration: float, length: int = 20) -> str:
@@ -65,14 +68,15 @@ def _get_or_create_view(guild_id: str) -> MusicControlView:
     return view
 
 
-def _register_persistent_view(client, guild_id: str, message_id: int, view: MusicControlView) -> None:
+def _register_persistent_view(client, guild_id: str, message_id: int, view: MusicControlView) -> bool:
     """Register persistent views once per guild/message id pair."""
     current_message_id = _registered_view_message_ids.get(guild_id)
     if current_message_id == message_id:
-        return
+        return False
 
     client.add_view(view, message_id=message_id)
     _registered_view_message_ids[guild_id] = message_id
+    return True
 
 
 def forget_guild_ui(guild_id: str) -> None:
@@ -84,6 +88,85 @@ def forget_guild_ui(guild_id: str) -> None:
 
     _persistent_views.pop(guild_id, None)
     _registered_view_message_ids.pop(guild_id, None)
+    _orphan_panel_cleanup_completed.discard(guild_id)
+
+
+def _is_stable_panel_message(client, message: discord.Message) -> bool:
+    """Identify bot-owned music panel messages from old and current UI formats."""
+    if not client.user or message.author.id != client.user.id:
+        return False
+
+    if 'Music Bot UI Initialized' in (message.content or ''):
+        return True
+
+    for embed in message.embeds:
+        if embed.title == 'Now Playing':
+            return True
+
+        footer_text = getattr(embed.footer, 'text', None)
+        if footer_text and footer_text.startswith('Playback Mode:'):
+            return True
+
+    return False
+
+
+async def _find_existing_stable_panel(channel: discord.TextChannel, client) -> discord.Message | None:
+    """Find the newest existing panel so restart recovery can reuse it."""
+    try:
+        async for message in channel.history(limit=PANEL_HISTORY_SCAN_LIMIT):
+            if _is_stable_panel_message(client, message):
+                return message
+    except discord.Forbidden:
+        logger.warning('Permission denied while scanning for existing music panel in channel %s', channel.id)
+    except discord.HTTPException as error:
+        logger.warning('HTTP error while scanning for existing music panel in channel %s: %s', channel.id, error)
+
+    return None
+
+
+async def _cleanup_orphan_stable_panels(
+    channel: discord.TextChannel,
+    client,
+    guild_id: str,
+    active_message_id: int,
+) -> None:
+    """Delete old duplicate panel messages while keeping the active stable panel."""
+    if guild_id in _orphan_panel_cleanup_completed:
+        return
+
+    deleted_count = 0
+    try:
+        async for message in channel.history(limit=PANEL_HISTORY_SCAN_LIMIT):
+            if message.id == active_message_id:
+                continue
+            if not _is_stable_panel_message(client, message):
+                continue
+
+            try:
+                await message.delete()
+                deleted_count += 1
+                await asyncio.sleep(0.1)
+            except discord.Forbidden:
+                logger.warning(
+                    'Permission denied while deleting orphan music panel %s in guild %s',
+                    message.id,
+                    guild_id,
+                )
+            except discord.HTTPException as error:
+                logger.warning(
+                    'Failed to delete orphan music panel %s in guild %s: %s',
+                    message.id,
+                    guild_id,
+                    error,
+                )
+    except discord.Forbidden:
+        logger.warning('Permission denied while scanning orphan music panels in guild %s', guild_id)
+    except discord.HTTPException as error:
+        logger.warning('HTTP error while scanning orphan music panels in guild %s: %s', guild_id, error)
+
+    _orphan_panel_cleanup_completed.add(guild_id)
+    if deleted_count:
+        logger.info('Deleted %s orphan music panel(s) in guild %s', deleted_count, guild_id)
 
 
 def create_now_playing_embed(guild_id: str, guild_data: dict) -> Embed:
@@ -225,7 +308,17 @@ async def _update_stable_message_now(guild_id: str):
                 try:
                     stable_message = await channel.fetch_message(int(stable_message_id))
                     guild_data['stable_message'] = stable_message
+                    logger.info(
+                        'Reusing saved music panel %s for guild %s',
+                        stable_message.id,
+                        guild_id,
+                    )
                 except discord.NotFound:
+                    logger.info(
+                        'Saved music panel %s was not found in guild %s; scanning for an existing panel',
+                        stable_message_id,
+                        guild_id,
+                    )
                     stable_message = None
                 except discord.Forbidden:
                     logger.error(
@@ -236,11 +329,30 @@ async def _update_stable_message_now(guild_id: str):
                     return
 
         if not stable_message:
+            existing_panel = await _find_existing_stable_panel(channel, client)
+            if existing_panel:
+                stable_message = existing_panel
+                guild_data['stable_message'] = stable_message
+                if guild_data.get('stable_message_id') != stable_message.id:
+                    guild_data['stable_message_id'] = stable_message.id
+                    stable_message_changed = True
+                logger.info(
+                    'Adopted existing music panel %s for guild %s',
+                    stable_message.id,
+                    guild_id,
+                )
+
+        if not stable_message:
             try:
-                stable_message = await channel.send('🎶 **Music Bot UI Initialized** 🎶')
+                stable_message = await channel.send(STABLE_PANEL_BOOTSTRAP_CONTENT)
                 guild_data['stable_message'] = stable_message
                 guild_data['stable_message_id'] = stable_message.id
                 stable_message_changed = True
+                logger.info(
+                    'Created new music panel %s for guild %s',
+                    stable_message.id,
+                    guild_id,
+                )
             except discord.Forbidden:
                 logger.error('Permission denied while creating stable message in guild %s', guild_id)
                 return
@@ -256,16 +368,45 @@ async def _update_stable_message_now(guild_id: str):
         for attempt in range(1, max_retries + 1):
             try:
                 await stable_message.edit(embed=embed, view=view)
-                _register_persistent_view(client, guild_id, stable_message.id, view)
+                registered_view = _register_persistent_view(client, guild_id, stable_message.id, view)
+                if registered_view:
+                    logger.info(
+                        'Registered music panel %s for guild %s',
+                        stable_message.id,
+                        guild_id,
+                    )
+                await _cleanup_orphan_stable_panels(channel, client, guild_id, stable_message.id)
                 break
             except discord.NotFound:
                 try:
-                    stable_message = await channel.send('🎶 **Music Bot UI Initialized** 🎶')
+                    existing_panel = await _find_existing_stable_panel(channel, client)
+                    if existing_panel:
+                        stable_message = existing_panel
+                        logger.info(
+                            'Stable panel edit target was gone; adopted panel %s for guild %s',
+                            stable_message.id,
+                            guild_id,
+                        )
+                    else:
+                        stable_message = await channel.send(STABLE_PANEL_BOOTSTRAP_CONTENT)
+                        logger.info(
+                            'Stable panel edit target was gone; created replacement panel %s for guild %s',
+                            stable_message.id,
+                            guild_id,
+                        )
+
                     guild_data['stable_message'] = stable_message
                     guild_data['stable_message_id'] = stable_message.id
                     stable_message_changed = True
                     await stable_message.edit(embed=embed, view=view)
-                    _register_persistent_view(client, guild_id, stable_message.id, view)
+                    registered_view = _register_persistent_view(client, guild_id, stable_message.id, view)
+                    if registered_view:
+                        logger.info(
+                            'Registered music panel %s for guild %s',
+                            stable_message.id,
+                            guild_id,
+                        )
+                    await _cleanup_orphan_stable_panels(channel, client, guild_id, stable_message.id)
                     break
                 except Exception:
                     logger.exception('Failed to recreate stable message for guild %s', guild_id)
