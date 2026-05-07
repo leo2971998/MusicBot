@@ -429,17 +429,25 @@ class MusicControlView(View):
         await update_stable_message(guild_id)
 
     async def stop_button(self, interaction: discord.Interaction):
-        from bot_state import client, player_manager
+        from bot_state import client, data_manager, player_manager, queue_manager
         from ui.embeds import update_stable_message
 
         guild_id = self._resolve_guild_id(interaction)
         await player_manager.disconnect_voice_client(guild_id)
+        removed = queue_manager.clear_queue(guild_id)
 
         if guild_id in client.guilds_data:
             client.guilds_data[guild_id]['current_song'] = None
+            client.guilds_data[guild_id].pop('song_duration', None)
+            client.guilds_data[guild_id].pop('song_start_time', None)
+            client.guilds_data[guild_id].pop('vote_skip', None)
         client.playback_modes[guild_id] = PlaybackMode.NORMAL
+        await data_manager.save_guilds_data(client)
 
-        await self._safe_interaction_response(interaction, '⏹ Stopped playback and disconnected.')
+        await self._safe_interaction_response(
+            interaction,
+            f'⏹ Stopped playback, disconnected, and cleared {removed} queued song(s).',
+        )
         await update_stable_message(guild_id)
 
     async def view_queue_button(self, interaction: discord.Interaction):

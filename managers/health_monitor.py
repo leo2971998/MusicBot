@@ -137,6 +137,7 @@ class HealthMonitor:
     async def _validate_guild_data(self):
         """Validate and clean up guild data for non-existent guilds"""
         invalid_guilds = []
+        stale_playback_guilds = []
         current_time = time.time()
         
         for guild_id in list(self.client.guilds_data.keys()):
@@ -156,11 +157,33 @@ class HealthMonitor:
                 last_activity = guild_data.get('last_activity', current_time)
                 
                 if current_time - last_activity > MAX_GUILD_DATA_AGE:
-                    # Guild has been inactive for too long
+                    # Keep server setup, but clear stale playback-only state.
                     voice_client = self.player_manager.voice_clients.get(guild_id)
                     if not voice_client or not voice_client.is_connected():
-                        invalid_guilds.append(guild_id)
-                        logger.info(f"Marking inactive guild {guild_id} for cleanup (inactive for {(current_time - last_activity) / 3600:.1f} hours)")
+                        changed = False
+
+                        for key in ('current_song', 'song_duration', 'song_start_time', 'vote_skip'):
+                            if key in guild_data and guild_data.get(key) is not None:
+                                guild_data.pop(key, None)
+                                changed = True
+
+                        if self.client.playback_modes.pop(guild_id, None) is not None:
+                            changed = True
+
+                        has_queue_state = (
+                            guild_id in self.queue_manager.queues
+                            or guild_id in self.queue_manager.repeat_all_playlists
+                        )
+                        if has_queue_state:
+                            self.queue_manager.cleanup_guild(guild_id)
+                            changed = True
+
+                        if changed:
+                            stale_playback_guilds.append(guild_id)
+                            logger.info(
+                                f"Cleared stale playback state for guild {guild_id} "
+                                f"(inactive for {(current_time - last_activity) / 3600:.1f} hours)"
+                            )
                         
             except Exception as e:
                 logger.warning(f"Error validating guild {guild_id}: {e}")
@@ -174,7 +197,11 @@ class HealthMonitor:
                 logger.exception(f"Error cleaning up guild {guild_id}")
                 
         if invalid_guilds:
-            logger.info(f"Cleaned up {len(invalid_guilds)} invalid/inactive guilds")
+            logger.info(f"Cleaned up {len(invalid_guilds)} invalid guilds")
+
+        if stale_playback_guilds:
+            await self.data_manager.save_guilds_data(self.client)
+            logger.info(f"Cleared stale playback state for {len(stale_playback_guilds)} guilds")
             
     async def _cleanup_guild(self, guild_id: str):
         """Clean up all data for a specific guild"""

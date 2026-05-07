@@ -68,6 +68,7 @@ class QueueManager:
         queue = self.queues.get(guild_id, [])
         count = len(queue)
         self.queues[guild_id] = []
+        self.repeat_all_playlists.pop(guild_id, None)
         logger.info(f"Cleared {count} songs from guild {guild_id} queue")
         return count
 

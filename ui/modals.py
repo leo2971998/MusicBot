@@ -154,7 +154,7 @@ class ModalSearchResultSelect(discord.ui.Select):
                     "❌ An error occurred while processing your selection.",
                     ephemeral=True
                 )
-            except:
+            except Exception:
                 # If followup fails, interaction might be completely dead
                 logger.error("Failed to send error message via followup")
 
@@ -175,7 +175,7 @@ class AddSongModal(Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         logger.debug(f"AddSongModal submitted in guild {interaction.guild_id}")
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         song_name_or_url = self.song_input.value.strip()
 

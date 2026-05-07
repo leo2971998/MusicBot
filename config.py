@@ -5,10 +5,35 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+
+def _get_bool_env(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _get_int_env(name: str, default: int, *, minimum: int | None = None) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+
+    if minimum is not None and parsed < minimum:
+        return default
+
+    return parsed
+
+
 # Bot Configuration
 TOKEN = os.getenv('DISCORD_TOKEN')
 DATA_FILE = 'guilds_data.json'
 MUSIC_CHANNEL_NAME = 'leo-song-requests'
+MAX_QUERY_LENGTH = _get_int_env("MAX_QUERY_LENGTH", 500, minimum=1)
 
 # FFmpeg options - Enhanced for better streaming stability
 FFMPEG_OPTIONS = {
@@ -38,7 +63,7 @@ def _build_ytdl_options(*, flat: bool = False) -> dict:
         'no_warnings': True,
         'default_search': 'ytsearch',
         'source_address': '0.0.0.0',
-        'nocheckcertificate': True,
+        'nocheckcertificate': _get_bool_env('YTDL_NO_CHECK_CERTIFICATE', False),
         'extractor_retries': 3,
         'retries': 3,
         'extractor_args': YTDL_EXTRACTOR_ARGS,
@@ -86,13 +111,16 @@ SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
 SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
 
 # Logging Configuration
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+_LOG_LEVELS = {'CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET'}
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+if LOG_LEVEL not in _LOG_LEVELS:
+    LOG_LEVEL = "INFO"
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 # How long to stay connected when idle (in seconds)
-IDLE_DISCONNECT_DELAY = int(os.getenv("IDLE_DISCONNECT_DELAY", "120"))
+IDLE_DISCONNECT_DELAY = _get_int_env("IDLE_DISCONNECT_DELAY", 120, minimum=0)
 
 # Health check and cleanup intervals (in seconds)
-HEALTH_CHECK_INTERVAL = int(os.getenv("HEALTH_CHECK_INTERVAL", "300"))  # 5 minutes
-MEMORY_CLEANUP_INTERVAL = int(os.getenv("MEMORY_CLEANUP_INTERVAL", "600"))  # 10 minutes
-MAX_GUILD_DATA_AGE = int(os.getenv("MAX_GUILD_DATA_AGE", "86400"))  # 24 hours
+HEALTH_CHECK_INTERVAL = _get_int_env("HEALTH_CHECK_INTERVAL", 300, minimum=1)  # 5 minutes
+MEMORY_CLEANUP_INTERVAL = _get_int_env("MEMORY_CLEANUP_INTERVAL", 600, minimum=1)  # 10 minutes
+MAX_GUILD_DATA_AGE = _get_int_env("MAX_GUILD_DATA_AGE", 86400, minimum=1)  # 24 hours

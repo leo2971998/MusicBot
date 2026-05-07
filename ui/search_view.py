@@ -143,10 +143,16 @@ class SearchResultSelect(Select):
                 
         except Exception as e:
             logger.error(f"Error in search result selection: {e}")
-            await interaction.response.send_message(
-                "❌ An error occurred while processing your selection.",
-                ephemeral=True
-            )
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    "❌ An error occurred while processing your selection.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.response.send_message(
+                    "❌ An error occurred while processing your selection.",
+                    ephemeral=True,
+                )
 
 def create_search_results_embed(search_results: List[Dict], query: str) -> discord.Embed:
     """Create embed displaying search results"""

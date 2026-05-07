@@ -4,18 +4,31 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import yt_dlp as youtube_dl
-from config import YTDL_FORMAT_OPTS, FFMPEG_OPTIONS, PlaybackMode, FULL_METADATA_OPTS
+from config import YTDL_FORMAT_OPTS, FFMPEG_OPTIONS, PlaybackMode, FULL_METADATA_OPTS, MAX_QUERY_LENGTH
 from utils.validators import is_setup
 from utils.search_cache import search_cache
 from utils.search_optimizer import search_optimizer
 from utils.retry import retry_async
 from utils.cache import song_cache
+from utils.song_utils import create_song_info
 
 logger = logging.getLogger(__name__)
 
 # Initialize YouTube DL instances
 ytdl = youtube_dl.YoutubeDL(YTDL_FORMAT_OPTS)
 full_metadata_ytdl = youtube_dl.YoutubeDL(FULL_METADATA_OPTS)
+
+
+def _normalize_request_text(value: str) -> tuple[str | None, str | None]:
+    text = (value or '').strip()
+    if not text:
+        return None, "❌ Please provide a song name or URL."
+
+    if len(text) > MAX_QUERY_LENGTH:
+        return None, f"❌ Song requests must be {MAX_QUERY_LENGTH} characters or fewer."
+
+    return text, None
+
 
 def setup_music_commands(client, queue_manager, player_manager, data_manager):
     """Setup music-related commands"""
@@ -26,9 +39,14 @@ def setup_music_commands(client, queue_manager, player_manager, data_manager):
     async def search_command(interaction: discord.Interaction, query: str):
         """Search command with auto-selection of the top result"""
         logger.debug(f"/search invoked by {interaction.user} in guild {interaction.guild_id} with query: {query}")
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
 
         try:
+            query, validation_error = _normalize_request_text(query)
+            if validation_error:
+                await interaction.followup.send(validation_error, ephemeral=True)
+                return
+
             # Show searching message
             await interaction.followup.send(f"🔍 Searching for: **{query}**...", ephemeral=True)
             
@@ -76,9 +94,14 @@ def setup_music_commands(client, queue_manager, player_manager, data_manager):
     async def search_preview_command(interaction: discord.Interaction, query: str):
         """Legacy search command with preview and manual selection"""
         logger.debug(f"/search_preview invoked by {interaction.user} in guild {interaction.guild_id} with query: {query}")
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
 
         try:
+            query, validation_error = _normalize_request_text(query)
+            if validation_error:
+                await interaction.followup.send(validation_error, ephemeral=True)
+                return
+
             # Get search results
             search_results = await _extract_song_data(query, search_mode=True)
             
@@ -136,7 +159,7 @@ def setup_music_commands(client, queue_manager, player_manager, data_manager):
     async def play_command(interaction: discord.Interaction, link: str):
         """Play command"""
         logger.debug(f"/play invoked by {interaction.user} in guild {interaction.guild_id} with link: {link}")
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
 
         try:
             response_message = await process_play_request(
@@ -166,7 +189,7 @@ def setup_music_commands(client, queue_manager, player_manager, data_manager):
     async def playnext_command(interaction: discord.Interaction, link: str):
         """Play next command"""
         logger.debug(f"/playnext invoked by {interaction.user} in guild {interaction.guild_id} with link: {link}")
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
 
         try:
             response_message = await process_play_request(
@@ -220,6 +243,20 @@ async def process_play_request(user, guild, channel, link, client, queue_manager
 
         user_voice_channel = user.voice.channel
 
+        link, validation_error = _normalize_request_text(link)
+        if validation_error:
+            return validation_error
+
+        # Extract before joining voice so bad links/searches do not leave the bot connected.
+        song_data = await _extract_song_data(link)
+        if not song_data:
+            return "❌ Could not extract song information."
+
+        if not user.voice or not user.voice.channel:
+            return "❌ You left the voice channel before the song was ready."
+
+        user_voice_channel = user.voice.channel
+
         # Get or create voice client with enhanced error handling
         try:
             voice_client = await player_manager.get_or_create_voice_client(
@@ -247,11 +284,6 @@ async def process_play_request(user, guild, channel, link, client, queue_manager
         ):
             # Let the user know where the bot is currently playing
             notify_channel = voice_client.channel
-
-        # Extract song information
-        song_data = await _extract_song_data(link)
-        if not song_data:
-            return "❌ Could not extract song information."
 
         # Process single track vs playlist
         if 'entries' not in song_data:
@@ -392,14 +424,7 @@ async def _process_single_song(song_data, user, guild_id, client, queue_manager,
                                player_manager, data_manager, play_next, extra_meta):
     """Process a single song"""
     try:
-        song_info = song_data.copy()
-        song_info['requester'] = user.mention
-        song_info['requester_id'] = user.id  # Store user ID for easier comparison
-
-        if extra_meta:
-            song_info.update(extra_meta)
-        else:
-            song_info['source'] = 'youtube'
+        song_info = create_song_info(song_data, user=user, extra_meta=extra_meta)
 
         voice_client = player_manager.voice_clients.get(guild_id)
 
@@ -439,17 +464,10 @@ async def _process_playlist(song_data, user, guild_id, client, queue_manager,
             if entry is None:
                 continue
 
-            song_info = entry.copy()
-            song_info['requester'] = user.mention
-            song_info['requester_id'] = user.id  # Store user ID for easier comparison
-
-            if extra_meta:
-                song_info.update(extra_meta)
-            else:
-                song_info['source'] = 'youtube'
+            song_info = create_song_info(entry, user=user, extra_meta=extra_meta)
 
             queue_manager.add_song(guild_id, song_info, False)  # Always add to end for playlists
-            added_songs.append(song_info['title'])
+            added_songs.append(song_info.get('title', 'Unknown title'))
 
         # Start playing if nothing is currently playing
         voice_client = player_manager.voice_clients.get(guild_id)
@@ -535,7 +553,21 @@ async def _play_song(guild_id, song_info, client, player_manager, queue_manager,
                 asyncio.run_coroutine_threadsafe(coro, client.loop)
 
         # Start playing
-        await player_manager.play_audio_source(guild_id, source, after_playing)
+        if not await player_manager.play_audio_source(guild_id, source, after_playing):
+            logger.error(f"Could not start audio source in guild {guild_id}")
+            if retry_count < max_retries:
+                await _play_song(
+                    guild_id,
+                    song_info,
+                    client,
+                    player_manager,
+                    queue_manager,
+                    data_manager,
+                    retry_count + 1,
+                )
+            else:
+                await _play_next_song(guild_id, client, queue_manager, player_manager, data_manager)
+            return
 
         # Store song duration and start time for progress tracking
         import time

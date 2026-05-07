@@ -185,7 +185,10 @@ async def on_message(message):
                     logger.warning(f"Failed to auto-clear messages in guild {guild_id}: {e}")
 
             if response_message:
-                sent_msg = await message.channel.send(response_message)
+                sent_msg = await message.channel.send(
+                    response_message,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
                 await asyncio.sleep(5)
                 try:
                     await sent_msg.delete()

@@ -75,6 +75,10 @@ If you prefer text commands, or if button-based interactions are unavailable for
       DISCORD_BOT_TOKEN=YOUR_BOT_TOKEN
       # Optional: how long the bot stays in voice when idle
       IDLE_DISCONNECT_DELAY=120
+      # Optional: maximum accepted song search/URL length
+      MAX_QUERY_LENGTH=500
+      # Optional: only enable if your environment breaks TLS certificate validation
+      YTDL_NO_CHECK_CERTIFICATE=false
       ```
      The timer is automatically cancelled if new songs are added before it expires.
    - Configure any additional settings as needed (e.g., prefix, default volume).
